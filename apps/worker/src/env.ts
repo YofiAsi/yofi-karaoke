@@ -12,7 +12,7 @@ const EnvSchema = z.object({
     .default("false")
     .transform((v) => v === "true"),
   AUDIO_SEP_MODEL: z.string().default("UVR-MDX-NET-Inst_HQ_3.onnx"),
-  OV_DEVICE: z.enum(["GPU", "CPU"]).default("GPU"),
+  SEPARATOR_BACKEND: z.enum(["openvino", "cuda", "cpu"]).default("openvino"),
   PYTHON_BIN: z.string().default("python3"),
   SEPARATE_PY_PATH: z.string().default("/app/apps/worker/python/separate.py"),
   WORKER_TMP_DIR: z.string().default("/tmp/karaoke"),

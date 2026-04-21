@@ -5,6 +5,7 @@ FROM base AS builder
 WORKDIR /app
 COPY . .
 RUN pnpm install
+RUN pnpm --filter @karaoke/shared build
 RUN pnpm --filter web build
 
 FROM base AS runner

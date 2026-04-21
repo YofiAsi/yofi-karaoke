@@ -24,8 +24,8 @@ export async function separateVocals(
     outputDir,
     "--model",
     env.AUDIO_SEP_MODEL,
-    "--device",
-    env.OV_DEVICE,
+    "--backend",
+    env.SEPARATOR_BACKEND,
   ]);
   const wallMs = Date.now() - started;
 
