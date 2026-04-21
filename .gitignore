@@ -5,3 +5,4 @@ dist/
 *.log
 apps/worker/python/__pycache__
 models/
+.worktrees/
