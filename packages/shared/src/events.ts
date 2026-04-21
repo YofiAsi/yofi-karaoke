@@ -11,6 +11,8 @@ export const SocketEvents = {
   playbackTick: "playback:tick",
   hostChanged: "host:changed",
   playerChanged: "player:changed",
+  // Emitted by the player phone when audio ends; server auto-advances after 3s grace
+  playbackEnded: "playback:ended",
 } as const;
 
 export const PgNotifyChannels = {

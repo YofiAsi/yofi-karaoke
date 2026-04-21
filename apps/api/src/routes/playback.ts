@@ -83,7 +83,7 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
       });
     }
 
-    // Find next ready item
+    // Find next ready item (2.16: skip-if-not-ready — only state=ready items are candidates)
     const nextItem = await prisma.queueItem.findFirst({
       where: { state: QueueState.ready },
       orderBy: { position: "asc" },
