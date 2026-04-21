@@ -13,6 +13,8 @@ import { registerUserRoutes } from "./routes/users.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerQueueRoutes } from "./routes/queue.js";
 import { registerAudioRoutes } from "./routes/audio.js";
+import { setupSocketIO } from "./sockets/index.js";
+import { startBroadcastBridge } from "./sockets/broadcast.js";
 
 async function build() {
   const app = Fastify({
@@ -54,6 +56,8 @@ async function main(): Promise<void> {
   try {
     await app.listen({ port: env.PORT, host: env.HOST });
     app.log.info({ port: env.PORT, host: env.HOST }, "api listening");
+    const io = setupSocketIO(app.server);
+    await startBroadcastBridge(io);
   } catch (err) {
     app.log.error(err);
     process.exit(1);
