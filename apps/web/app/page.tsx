@@ -15,6 +15,7 @@ import { AudioController } from "@/lib/audio";
 import { useSocket } from "@/lib/socket";
 import { NowPlaying } from "@/components/NowPlaying";
 import { QueueList } from "@/components/QueueList";
+import { HostControls } from "@/components/HostControls";
 
 export default function HomePage() {
   const router = useRouter();
@@ -120,6 +121,15 @@ export default function HomePage() {
     }
   }
 
+  // Host heartbeat — 10s interval while user is host
+  useEffect(() => {
+    if (!user?.isHost) return;
+    const id = setInterval(() => {
+      api.post("/api/users/heartbeat").catch(console.error);
+    }, 10_000);
+    return () => clearInterval(id);
+  }, [user]);
+
   if (!user) return null;
 
   return (
@@ -144,6 +154,11 @@ export default function HomePage() {
           Now playing
         </p>
         <NowPlaying current={current} playbackState={playbackState} />
+        <HostControls
+          user={user}
+          playbackState={playbackState}
+          currentSongDuration={current?.song.durationSeconds}
+        />
         {current && (
           <>
             <button
