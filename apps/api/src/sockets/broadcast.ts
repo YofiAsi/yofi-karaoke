@@ -14,10 +14,16 @@ const channelToEvent: Record<string, string> = {
   [PgNotifyChannels.playerChanged]: SocketEvents.playerChanged,
 };
 
-export async function startBroadcastBridge(io: Server): Promise<void> {
+async function connectWithRetry(io: Server, delayMs = 1000): Promise<void> {
   const client = new Client({ connectionString: env.DATABASE_URL });
-  await client.connect();
 
+  client.on("error", (err) => {
+    console.error("[broadcast-bridge] pg client error — reconnecting in", delayMs, "ms", err.message);
+    void client.end().catch(() => {});
+    setTimeout(() => void connectWithRetry(io, Math.min(delayMs * 2, 30_000)), delayMs);
+  });
+
+  await client.connect();
   for (const channel of Object.values(PgNotifyChannels)) {
     await client.query(`LISTEN "${channel}"`);
   }
@@ -25,20 +31,14 @@ export async function startBroadcastBridge(io: Server): Promise<void> {
   client.on("notification", (msg) => {
     const eventName = channelToEvent[msg.channel];
     if (!eventName) return;
-
     let payload: unknown = {};
     if (msg.payload) {
-      try {
-        payload = JSON.parse(msg.payload);
-      } catch {
-        payload = { raw: msg.payload };
-      }
+      try { payload = JSON.parse(msg.payload); } catch { payload = { raw: msg.payload }; }
     }
-
     io.emit(eventName, payload);
   });
+}
 
-  client.on("error", (err) => {
-    console.error("[broadcast-bridge] pg client error", err);
-  });
+export async function startBroadcastBridge(io: Server): Promise<void> {
+  await connectWithRetry(io);
 }

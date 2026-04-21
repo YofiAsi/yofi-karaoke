@@ -54,9 +54,9 @@ async function build() {
 async function main(): Promise<void> {
   const app = await build();
   try {
+    const io = setupSocketIO(app.server);  // attach BEFORE port opens
     await app.listen({ port: env.PORT, host: env.HOST });
     app.log.info({ port: env.PORT, host: env.HOST }, "api listening");
-    const io = setupSocketIO(app.server);
     await startBroadcastBridge(io);
   } catch (err) {
     app.log.error(err);
