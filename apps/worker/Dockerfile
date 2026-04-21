@@ -2,7 +2,7 @@ FROM node:22-bookworm-slim AS node-builder
 RUN corepack enable
 WORKDIR /app
 COPY . .
-RUN pnpm install --frozen-lockfile
+RUN pnpm install
 RUN pnpm --filter worker build
 
 FROM ubuntu:22.04 AS runner
@@ -35,11 +35,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
   apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=node-builder /app/apps/worker/dist ./apps/worker/dist
-COPY --from=node-builder /app/node_modules ./node_modules
-COPY --from=node-builder /app/apps/worker/node_modules ./apps/worker/node_modules
-COPY apps/worker/python ./apps/worker/python
+COPY --from=node-builder /app /app
 
 RUN pip3 install --no-cache-dir -r /app/apps/worker/python/requirements.txt
 
-CMD clinfo -l && node apps/worker/dist/index.js
+WORKDIR /app/apps/worker
+CMD clinfo -l && node dist/index.js
