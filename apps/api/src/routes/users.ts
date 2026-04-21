@@ -31,7 +31,9 @@ export async function registerUserRoutes(app: FastifyInstance): Promise<void> {
         }
         setUserCookie(reply, outcome.userId);
         if (outcome.kind === "created" || outcome.kind === "taken_over") {
-          await notifyHostChanged(outcome.userId, outcome.userName);
+          notifyHostChanged(outcome.userId, outcome.userName).catch((err) =>
+            req.log.error({ err }, "notifyHostChanged failed")
+          );
         }
         return reply.code(201).send({
           id: outcome.userId,
