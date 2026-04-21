@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
   QueueView,
   User,
@@ -11,11 +11,11 @@ import type {
 } from "@karaoke/shared";
 import { api } from "@/lib/api";
 import { loadStoredUser } from "@/lib/user";
-import { AudioController } from "@/lib/audio";
 import { useSocket } from "@/lib/socket";
 import { NowPlaying } from "@/components/NowPlaying";
 import { QueueList } from "@/components/QueueList";
 import { HostControls } from "@/components/HostControls";
+import { PlayerToggle } from "@/components/PlayerToggle";
 
 export default function HomePage() {
   const router = useRouter();
@@ -26,9 +26,6 @@ export default function HomePage() {
   const [progress, setProgress] = useState<Map<string, SongProgressEvent>>(
     () => new Map()
   );
-  const [isPlayingHere, setIsPlayingHere] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const controllerRef = useRef<AudioController | null>(null);
 
   useEffect(() => {
     const stored = loadStoredUser();
@@ -86,41 +83,6 @@ export default function HomePage() {
   const currentAudioKey =
     current && current.song.hasInstrumental ? current.song.id : null;
 
-  useEffect(() => {
-    if (!currentAudioKey) return;
-    const el = audioRef.current;
-    if (!el) return;
-    const ctrl = new AudioController({
-      onPause: () => setIsPlayingHere(false),
-      onPlay: () => setIsPlayingHere(true),
-      onEnded: () => {
-        setIsPlayingHere(false);
-        fetchQueue();
-      },
-    });
-    ctrl.attach(el);
-    controllerRef.current = ctrl;
-    return () => {
-      ctrl.detach();
-      controllerRef.current = null;
-    };
-  }, [currentAudioKey, fetchQueue]);
-
-  async function togglePlayHere() {
-    const ctrl = controllerRef.current;
-    if (!ctrl) return;
-    if (isPlayingHere) {
-      ctrl.pause();
-      return;
-    }
-    if (!current) return;
-    try {
-      await ctrl.play();
-    } catch (err) {
-      console.error("play failed", err);
-    }
-  }
-
   // Host heartbeat — 10s interval while user is host
   useEffect(() => {
     if (!user?.isHost) return;
@@ -159,28 +121,11 @@ export default function HomePage() {
           playbackState={playbackState}
           currentSongDuration={current?.song.durationSeconds}
         />
-        {current && (
-          <>
-            <button
-              onClick={togglePlayHere}
-              className={`mt-5 w-full rounded-xl py-4 font-semibold ${
-                isPlayingHere
-                  ? "bg-neutral-800 text-white"
-                  : "bg-white text-black"
-              }`}
-            >
-              {isPlayingHere ? "Stop playing here" : "Play here"}
-            </button>
-            {current.song.hasInstrumental && (
-              <audio
-                ref={audioRef}
-                src={`/api/audio/${current.song.id}`}
-                preload="metadata"
-                playsInline
-              />
-            )}
-          </>
-        )}
+        <PlayerToggle
+          currentSongId={currentAudioKey}
+          playbackState={playbackState}
+          currentUserId={user.id}
+        />
       </section>
 
       <section>
