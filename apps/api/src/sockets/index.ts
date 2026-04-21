@@ -98,15 +98,12 @@ export function setupSocketIO(httpServer: HttpServer): Server {
           if (!state || state.playerUserId !== emitterId) return;
 
           const itemIdAtEnd = state.currentQueueItemId ?? null;
-          setTimeout(() => {
+          const timer = setTimeout(() => {
             autoAdvanceIfStill(itemIdAtEnd).catch(console.error);
           }, 3000);
+          socket.once("disconnect", () => clearTimeout(timer));
         })
         .catch(console.error);
-    });
-
-    socket.on("disconnect", () => {
-      // no-op for now
     });
   });
 
