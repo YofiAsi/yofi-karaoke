@@ -1,0 +1,77 @@
+services:
+  web:
+    image: karaoke-web
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      - NEXT_PUBLIC_API_URL=/api
+      - NEXT_PUBLIC_WS_URL=/socket.io
+    depends_on:
+      - api
+    ports:
+      - "3000"
+
+  api:
+    image: karaoke-api
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      - DATABASE_URL=postgres://karaoke:${POSTGRES_PASSWORD}@postgres:5432/karaoke
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_BUCKET=${MINIO_BUCKET}
+      - HOST_USER_NAME=${HOST_USER_NAME}
+      - HOST_STALE_SECONDS=30
+      - PLAYER_STALE_SECONDS=20
+      - SESSION_SECRET=${SESSION_SECRET}
+    depends_on:
+      - postgres
+      - minio
+
+  worker:
+    image: karaoke-worker
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    environment:
+      - DATABASE_URL=postgres://karaoke:${POSTGRES_PASSWORD}@postgres:5432/karaoke
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_BUCKET=${MINIO_BUCKET}
+      - AUDIO_SEP_MODEL=UVR-MDX-NET-Inst_HQ_3
+      - OV_DEVICE=GPU
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:-109}"
+      - "${VIDEO_GID:-44}"
+    depends_on:
+      - postgres
+      - minio
+      - api
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=karaoke
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=karaoke
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    volumes:
+      - miniodata:/data
+
+volumes:
+  pgdata:
+  miniodata:
