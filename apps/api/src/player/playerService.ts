@@ -27,10 +27,10 @@ export async function claim(userId: string): Promise<PlayerClaimResult> {
       playerLastHeartbeatAt: now,
     },
   });
-  await notify(PgNotifyChannels.playerChanged, {
+  notify(PgNotifyChannels.playerChanged, {
     playerUserId: userId,
     playerUserName: user.name,
-  });
+  }).catch((err) => console.error("[playerService] notify failed", err));
   return { userId, userName: user.name };
 }
 
@@ -44,10 +44,10 @@ export async function release(userId: string): Promise<void> {
       playerLastHeartbeatAt: null,
     },
   });
-  await notify(PgNotifyChannels.playerChanged, {
+  notify(PgNotifyChannels.playerChanged, {
     playerUserId: null,
     playerUserName: null,
-  });
+  }).catch((err) => console.error("[playerService] notify failed", err));
 }
 
 export async function heartbeat(userId: string): Promise<void> {
