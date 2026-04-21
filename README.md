@@ -16,14 +16,30 @@ Self-hosted party karaoke. Phones queue songs → GPU strips vocals → one desi
    ```bash
    bash scripts/detect-gpu-gids.sh >> .env
    ```
-3. Start local dev dependencies (Postgres + MinIO):
+3. Install JS deps (generates `pnpm-lock.yaml`):
    ```bash
-   bash scripts/dev.sh
+   pnpm install
    ```
-4. Apply migrations:
+4. Start the full stack:
    ```bash
-   pnpm --filter api prisma migrate dev
+   docker compose up -d --build
    ```
+   On first boot the `api` container runs `prisma migrate deploy` automatically.
+
+For local (non-Docker) dev, start infra only and run apps on the host:
+
+```bash
+bash scripts/dev.sh                        # postgres + minio in Docker
+pnpm --filter api prisma migrate deploy
+pnpm --filter api dev                      # API on :4000
+pnpm --filter worker dev                   # worker (needs yt-dlp + Python/OpenVINO on host)
+pnpm --filter web dev                      # Next on :3000, proxies /api and /socket.io to :4000
+```
+
+## Phase 1 smoke test
+
+See [`docs/phase-1-smoke-test.md`](docs/phase-1-smoke-test.md) for the end-to-end
+acceptance test that proves vocal separation works on the Arc GPU.
 
 ## Deployment (Dokploy)
 
@@ -35,7 +51,14 @@ Self-hosted party karaoke. Phones queue songs → GPU strips vocals → one desi
 ## Architecture
 
 - **web** (Next.js 15, port 3000) — public-facing; proxies `/api/*` and `/socket.io/*` to the `api` service.
-- **api** (Fastify 5 + Socket.IO 4, port 4000) — REST + WebSocket.
+- **api** (Fastify 5 + Socket.IO 4, port 4000) — REST + WebSocket (WS lands in Phase 2).
 - **worker** (Node + Python + OpenVINO) — job queue via graphile-worker; vocal separation on Intel Arc via ONNX/OpenVINO.
 - **postgres** (16) — primary store + graphile-worker queue.
 - **minio** — S3-compatible object store for instrumental audio files.
+
+The API also shells out to `yt-dlp` for search and metadata lookups, so the
+API image installs `yt-dlp` + Python + ffmpeg alongside Node.
+
+For local (non-Docker) dev of the API you need `yt-dlp` and `ffmpeg` on your PATH.
+The worker additionally needs the Intel graphics + OpenVINO stack, which is why
+running the worker inside Docker is strongly recommended.
