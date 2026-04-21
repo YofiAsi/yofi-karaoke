@@ -1,5 +1,5 @@
 FROM node:22-alpine AS base
-RUN corepack enable
+RUN corepack enable && apk add --no-cache python3 py3-pip ffmpeg yt-dlp
 
 FROM base AS builder
 WORKDIR /app
