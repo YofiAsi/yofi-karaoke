@@ -1,11 +1,8 @@
 FROM node:22-bookworm-slim AS node-builder
 RUN corepack enable
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml ./
-COPY apps/worker/package.json ./apps/worker/
-COPY packages/shared/package.json ./packages/shared/
-RUN pnpm install --frozen-lockfile
 COPY . .
+RUN pnpm install --frozen-lockfile
 RUN pnpm --filter worker build
 
 FROM ubuntu:22.04 AS runner
