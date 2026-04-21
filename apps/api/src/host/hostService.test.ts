@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ---------------------------------------------------------------------------
 // vi.hoisted — values that must exist before vi.mock factories run
@@ -112,12 +112,20 @@ describe("isStale()", () => {
 // claimOrConflict
 // ---------------------------------------------------------------------------
 describe("claimOrConflict()", () => {
+  const BASE_DATE = new Date("2026-04-22T12:00:00.000Z");
+
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(BASE_DATE);
     vi.clearAllMocks();
     // Restore the $transaction implementation after clearAllMocks resets it
     mockPrisma.$transaction.mockImplementation(
       (cb: (tx: typeof mockTx) => unknown) => cb(mockTx)
     );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("creates a new host when no user with that name exists", async () => {
@@ -144,10 +152,11 @@ describe("claimOrConflict()", () => {
 
     expect(result).toEqual({ kind: "taken_over", userId: "u2", userName: "Host" });
     expect(mockTx.user.update).toHaveBeenCalledOnce();
+    expect(mockTx.playbackState.update).toHaveBeenCalledOnce();
   });
 
   it("takes over when user exists and heartbeat has expired", async () => {
-    const staleTime = new Date(Date.now() - 60_000); // 60 s ago — definitely stale
+    const staleTime = new Date(new Date("2026-04-22T12:00:00.000Z").getTime() - 60_000); // 60 s ago — definitely stale
     mockTx.user.findFirst.mockResolvedValue({ id: "u3", name: "Host" });
     mockTx.playbackState.findUnique.mockResolvedValue({
       id: 1,
@@ -160,10 +169,11 @@ describe("claimOrConflict()", () => {
     const result = await claimOrConflict("Host");
 
     expect(result).toEqual({ kind: "taken_over", userId: "u3", userName: "Host" });
+    expect(mockTx.playbackState.update).toHaveBeenCalledOnce();
   });
 
   it("returns conflict when user exists, heartbeat is fresh, and a different user is host", async () => {
-    const freshTime = new Date(Date.now() - 5_000); // 5 s ago — fresh
+    const freshTime = new Date(new Date("2026-04-22T12:00:00.000Z").getTime() - 5_000); // 5 s ago — fresh
     mockTx.user.findFirst.mockResolvedValue({ id: "u4", name: "Host" });
     mockTx.playbackState.findUnique.mockResolvedValue({
       id: 1,
@@ -179,7 +189,7 @@ describe("claimOrConflict()", () => {
   });
 
   it("returns already_host when user exists and is already the current host with a fresh heartbeat", async () => {
-    const freshTime = new Date(Date.now() - 5_000); // 5 s ago
+    const freshTime = new Date(new Date("2026-04-22T12:00:00.000Z").getTime() - 5_000); // 5 s ago
     mockTx.user.findFirst.mockResolvedValue({ id: "u5", name: "Host" });
     mockTx.playbackState.findUnique.mockResolvedValue({
       id: 1,
