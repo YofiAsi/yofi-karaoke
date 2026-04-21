@@ -1,9 +1,17 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { CreateUserBodySchema, UserSchema } from "@karaoke/shared";
+import { CreateUserBodySchema, UserSchema, PgNotifyChannels } from "@karaoke/shared";
 import { prisma } from "../db.js";
 import { setUserCookie, requireUser } from "../auth/userCookie.js";
 import { claimOrConflict, heartbeat, isHostName } from "../host/hostService.js";
+
+async function notifyHostChanged(hostUserId: string, hostUserName: string): Promise<void> {
+  await prisma.$executeRawUnsafe(
+    `SELECT pg_notify($1, $2)`,
+    PgNotifyChannels.hostChanged,
+    JSON.stringify({ hostUserId, hostUserName }),
+  );
+}
 
 export async function registerUserRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/users", {
@@ -22,6 +30,7 @@ export async function registerUserRoutes(app: FastifyInstance): Promise<void> {
             .send({ error: "host_name_taken" });
         }
         setUserCookie(reply, outcome.userId);
+        await notifyHostChanged(outcome.userId, outcome.userName);
         return reply.code(201).send({
           id: outcome.userId,
           name: outcome.userName,
