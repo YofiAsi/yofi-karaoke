@@ -18,7 +18,7 @@ async function main(): Promise<void> {
       msg: "worker started",
       concurrency: 1,
       model: env.AUDIO_SEP_MODEL,
-      device: env.OV_DEVICE,
+      backend: env.SEPARATOR_BACKEND,
     }),
   );
 

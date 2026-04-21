@@ -41,8 +41,14 @@ export default function HomePage() {
     return () => clearInterval(id);
   }, [user, fetchQueue]);
 
+  const current = queue?.current ?? null;
+  const currentAudioKey =
+    current && current.song.hasInstrumental ? current.song.id : null;
+
   useEffect(() => {
-    if (!audioRef.current) return;
+    if (!currentAudioKey) return;
+    const el = audioRef.current;
+    if (!el) return;
     const ctrl = new AudioController({
       onPause: () => setIsPlayingHere(false),
       onPlay: () => setIsPlayingHere(true),
@@ -51,15 +57,13 @@ export default function HomePage() {
         fetchQueue();
       },
     });
-    ctrl.attach(audioRef.current);
+    ctrl.attach(el);
     controllerRef.current = ctrl;
     return () => {
       ctrl.detach();
       controllerRef.current = null;
     };
-  }, [fetchQueue]);
-
-  const current = queue?.current ?? null;
+  }, [currentAudioKey, fetchQueue]);
 
   async function togglePlayHere() {
     const ctrl = controllerRef.current;

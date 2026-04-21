@@ -40,10 +40,10 @@ async function build() {
   await registerAudioRoutes(app);
 
   app.setErrorHandler((err, _req, reply) => {
-    const statusCode =
-      (err as Error & { statusCode?: number }).statusCode ?? err.statusCode ?? 500;
+    const error = err as Error & { statusCode?: number };
+    const statusCode = error.statusCode ?? 500;
     reply.log.error({ err }, "request error");
-    reply.code(statusCode).send({ error: err.message ?? "internal_error" });
+    reply.code(statusCode).send({ error: error.message ?? "internal_error" });
   });
 
   return app;

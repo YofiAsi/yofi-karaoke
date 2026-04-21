@@ -34,10 +34,10 @@ services:
       - "4000:4000"
 
   worker:
-    image: karaoke-worker
+    image: karaoke-worker-nvidia
     build:
       context: .
-      dockerfile: apps/worker/Dockerfile
+      dockerfile: apps/worker/Dockerfile.nvidia
     environment:
       - DATABASE_URL=postgres://karaoke:${POSTGRES_PASSWORD}@postgres:5432/karaoke
       - MINIO_ENDPOINT=minio:9000
@@ -45,12 +45,14 @@ services:
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
       - MINIO_BUCKET=${MINIO_BUCKET}
       - AUDIO_SEP_MODEL=UVR-MDX-NET-Inst_HQ_3.onnx
-      - SEPARATOR_BACKEND=${SEPARATOR_BACKEND:-openvino}
-    devices:
-      - /dev/dri:/dev/dri
-    group_add:
-      - "${RENDER_GID:-109}"
-      - "${VIDEO_GID:-44}"
+      - SEPARATOR_BACKEND=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     depends_on:
       - postgres
       - minio

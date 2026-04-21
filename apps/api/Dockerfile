@@ -1,10 +1,12 @@
 FROM node:22-alpine AS base
-RUN corepack enable && apk add --no-cache python3 py3-pip ffmpeg yt-dlp
+RUN corepack enable && apk add --no-cache python3 py3-pip ffmpeg openssl \
+  && pip3 install --no-cache-dir --break-system-packages yt-dlp
 
 FROM base AS builder
 WORKDIR /app
 COPY . .
 RUN pnpm install
+RUN pnpm --filter @karaoke/shared build
 RUN pnpm --filter api build
 
 FROM base AS runner

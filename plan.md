@@ -4,7 +4,7 @@
 
 **Goal:** Self-hosted party karaoke app. Phones queue songs → GPU strips vocals → one designated phone plays the instrumental into the speakers while every phone's screen shows synced lyrics + the queue. One host controls playback.
 
-**Architecture:** Monorepo (pnpm). TS everywhere. Fastify API + Socket.IO ↔ Next.js UI. `graphile-worker` job queue in Postgres. Python subprocess for vocal separation on Intel Arc A750 via ONNX+OpenVINO. MinIO for audio. Deployed via Dokploy (Dokploy owns Traefik — do **not** write Traefik labels or reference the dokploy-network in compose; Dokploy injects those at deploy time).
+**Architecture:** Monorepo (pnpm). TS everywhere. Fastify API + Socket.IO ↔ Next.js UI. `graphile-worker` job queue in Postgres. Python subprocess for vocal separation — two interchangeable GPU backends ship in the repo: Intel Arc A750 via ONNX+OpenVINO (`docker-compose.yml` / `apps/worker/Dockerfile`), or NVIDIA via ONNX+CUDA EP (`docker-compose.nvidia.yml` / `apps/worker/Dockerfile.nvidia`). Selected at compose time via `SEPARATOR_BACKEND`. MinIO for audio. Deployed via Dokploy (Dokploy owns Traefik — do **not** write Traefik labels or reference the dokploy-network in compose; Dokploy injects those at deploy time).
 
 **Tech Stack:** Next.js 15 (App Router), Fastify 5, Socket.IO 4, Prisma 5, Postgres 16, MinIO, graphile-worker, yt-dlp, python-audio-separator (OpenVINO), LRCLIB, Tailwind + shadcn/ui.
 
@@ -12,7 +12,7 @@
 
 ## 0. Context
 
-Host has a Linux box with an Intel Arc A750 and Dokploy. Parties need low-friction song requests from phones, fast (sub-60s) vocal removal, and a shared view — **every participant's phone** must show the currently-playing song, the queue, and synced lyrics. One phone is the "player" (plugged into the speaker, actually emits audio); all other phones stay in lyric-sync via server state. Spec is in the invoking prompt; this plan is the build sequence.
+Host has a Linux box with a GPU (originally an Intel Arc A750; the repo also ships an NVIDIA CUDA path used for current Phase 1 development on WSL2) and Dokploy. Parties need low-friction song requests from phones, fast (sub-60s) vocal removal, and a shared view — **every participant's phone** must show the currently-playing song, the queue, and synced lyrics. One phone is the "player" (plugged into the speaker, actually emits audio); all other phones stay in lyric-sync via server state. Spec is in the invoking prompt; this plan is the build sequence.
 
 ---
 
@@ -61,7 +61,7 @@ Host has a Linux box with an Intel Arc A750 and Dokploy. Parties need low-fricti
 | Realtime | **Socket.IO 4** | rooms, reconnection, fallback transports; simpler than raw WS |
 | ORM | **Prisma 5** | typed schema, migrations, works cleanly with pg enums |
 | Job queue | **graphile-worker** | Postgres-only, TS, `LISTEN/NOTIFY` native, no Redis |
-| Vocal sep | **python-audio-separator** w/ ONNX + OpenVINO EP | MIT, actively maintained, Arc-capable via OpenVINO |
+| Vocal sep | **python-audio-separator** w/ ONNX Runtime | MIT, actively maintained. OpenVINO EP for Intel Arc; CUDA EP for NVIDIA. `SEPARATOR_BACKEND` picks the path. |
 | Lyrics | **LRCLIB** `GET /api/get` | free, no auth, synced LRC format |
 | Object store | **MinIO** | S3 API, self-host, trivial compose |
 | YT download | **yt-dlp** | only sane choice; drives both search and download |
@@ -74,11 +74,17 @@ Host has a Linux box with an Intel Arc A750 and Dokploy. Parties need low-fricti
 
 **Library:** `python-audio-separator` (pip). Wraps UVR models. Supports CUDA, CoreML, **DirectML, and OpenVINO** as ONNX Runtime EPs.
 
-**Backend:** ONNX Runtime with **OpenVINO Execution Provider**, device `GPU` (maps to Arc A750 via Intel compute runtime / Level Zero).
+**Backends shipped:** two interchangeable paths, selected by `SEPARATOR_BACKEND` env.
+
+- `openvino` — ONNX Runtime + OpenVINO EP, device `GPU` (Intel Arc via `intel-opencl-icd` / Level Zero). Primary target of the original plan. Image: `apps/worker/Dockerfile`, compose: `docker-compose.yml`, pip deps: `apps/worker/python/requirements.txt`.
+- `cuda` — ONNX Runtime + CUDA EP on `nvidia/cuda:12.6.0-runtime-ubuntu22.04`. Used for current Phase 1 development on WSL2 + NVIDIA. Image: `apps/worker/Dockerfile.nvidia`, compose: `docker-compose.nvidia.yml`, pip deps: `apps/worker/python/requirements.nvidia.txt`.
+- `cpu` — last-resort fallback; same image as `openvino`, no GPU mount needed.
 
 **Model:** `UVR-MDX-NET-Inst_HQ_3` (vocals/instrumental split, best quality-to-speed on MDX-Net). Alternative: `Kim_Vocal_2`. Let the implementer benchmark both with a 30s clip during Phase 1 and pin the winner.
 
 **Expected runtime:** ~15–35s for a 4-min song on A750 at chunked inference. (Reference: Arc A750 has comparable ML throughput to an RTX 3060; MDX-Net on 3060 runs ~10–20s/song; OpenVINO EP on Arc is within 1.5–2× that range per community benchmarks in `nomadkaraoke/python-audio-separator` issues and UVR Discord threads.) **Target: <60s.** If the worker exceeds 60s wall-time in Phase 1 benchmarking, fall back to the `HP5_only_main_vocal_LA` model (lighter) before accepting CPU.
+
+**Actual Phase 1 measurement** (NVIDIA path, see `bench.md`): warm run on 4:35 song → separate 15.9s / total pipeline 20.6s. Cold run on 10s clip → separate 42.7s / total 45.8s. Gate met on first candidate model (`UVR-MDX-NET-Inst_HQ_3`), so fallbacks not benchmarked.
 
 **Setup in worker image:**
 - Base: `python:3.11-slim` **OR** `node:22-slim` with Python installed. Recommend dual: Node entrypoint that spawns Python. Use multi-stage Dockerfile.
@@ -399,42 +405,50 @@ karaoke/
 
 > TDD where reasonable (pure logic: LRC parser, host takeover logic, queue position math). Integration flows (yt-dlp, separator) use smoke tests, not unit tests — mocking them is a lie.
 
-### Phase 0 — Bootstrap (1 commit per step)
+### Phase 0 — Bootstrap (1 commit per step) — DONE
 
-- [ ] **0.1** `git init` in `/root/repos/karaoke`. Add `.gitignore` (`node_modules/`, `dist/`, `.next/`, `.env`, `*.log`, `apps/worker/python/__pycache__`, `models/`).
-- [ ] **0.2** Write root `package.json` with `"packageManager": "pnpm@9"`, `pnpm-workspace.yaml` listing `apps/*` and `packages/*`, `tsconfig.base.json` with `strict: true`.
-- [ ] **0.3** Write `.env.example` listing every var (see §10).
-- [ ] **0.4** Write `docker-compose.yml` per §7. Write empty placeholder Dockerfiles.
-- [ ] **0.5** Commit: `chore: bootstrap monorepo and compose skeleton`.
+- [x] **0.1** `git init` in `/root/repos/karaoke`. Add `.gitignore` (`node_modules/`, `dist/`, `.next/`, `.env`, `*.log`, `apps/worker/python/__pycache__`, `models/`).
+- [x] **0.2** Write root `package.json` with `"packageManager": "pnpm@9"`, `pnpm-workspace.yaml` listing `apps/*` and `packages/*`, `tsconfig.base.json` with `strict: true`.
+- [x] **0.3** Write `.env.example` listing every var (see §10).
+- [x] **0.4** Write `docker-compose.yml` per §7. Write empty placeholder Dockerfiles.
+- [x] **0.5** Commit: `chore: bootstrap monorepo and compose skeleton`.
 
-### Phase 1 — Single-user local loop (prove the hard part works)
+### Phase 1 — Single-user local loop (prove the hard part works) — DONE
 
 Ship order: DB → worker vocal sep → api minimal → web minimal. At end of phase: **one user can request a song on localhost and hear the instrumental**.
 
-- [ ] **1.1 Prisma schema** (`apps/api/prisma/schema.prisma`) per §5. Run `pnpm prisma migrate dev --name init`. Add singleton CHECK. Seed one PlaybackState row.
-- [ ] **1.2 Worker Dockerfile** — multi-stage:
+- [x] **1.1 Prisma schema** (`apps/api/prisma/schema.prisma`) per §5. Run `pnpm prisma migrate dev --name init`. Add singleton CHECK. Seed one PlaybackState row.
+- [x] **1.2 Worker Dockerfile** — multi-stage:
   - Stage A: `node:22-bookworm-slim`, install pnpm, build worker TS.
   - Stage B: `ubuntu:22.04`, add Intel graphics repo, install `intel-opencl-icd intel-level-zero-gpu level-zero libze1 clinfo python3.11 python3-pip ffmpeg`, copy node + compiled worker, pip install from `requirements.txt`.
   - Entrypoint: `clinfo -l` sanity check → `node dist/index.js`.
-- [ ] **1.3 Pin** `requirements.txt`: `audio-separator[gpu]==0.x.y`, `onnxruntime-openvino==1.x.y`, `openvino==2024.x.y`. (Agent: fetch latest mutually compatible versions at build time, pin the triplet, record in file.)
-- [ ] **1.4 `python/separate.py`** — argparse `--input --output-dir --model --device`. Call `audio_separator.separator.Separator(output_dir=..., output_format="mp3", model_file_dir=..., use_openvino=True, openvino_device=device)`; load model; separate; print the instrumental output path to stdout. Fail fast if GPU not detected.
-- [ ] **1.5 Worker: `steps/download.ts`** — spawn `yt-dlp -f bestaudio -x --audio-format mp3 -o <tmp>/<id>.%(ext)s https://youtu.be/<id>`. Return path.
-- [ ] **1.6 Worker: `steps/separate.ts`** — spawn `python3 /app/python/separate.py --input <mp3> --output-dir <tmp> --model $AUDIO_SEP_MODEL --device $OV_DEVICE`. Parse stdout for instrumental path. Hard timeout 180s → mark job error.
-- [ ] **1.7 Worker: `steps/lyrics.ts`** — GET `https://lrclib.net/api/get?track_name=<t>&artist_name=<a>&duration=<d>`. Return `syncedLyrics` or null. 5s timeout.
-- [ ] **1.8 Worker: `minioUpload.ts`** — SDK `@aws-sdk/client-s3` against MinIO endpoint. Key: `instrumentals/<songId>.mp3`.
-- [ ] **1.9 Worker: `tasks/processSong.ts`** — orchestrate download→separate→lyrics→upload, updating `ProcessingJob.step` and issuing `NOTIFY song_progress, '{"songId":..., "step":..., "progressPct":..}'` between each. On error: set `step=error`, `errorMessage`, mark `QueueItem.state=failed`.
-- [ ] **1.10 Worker: `index.ts`** — `graphile-worker`'s `run` with `taskList: { process_song: processSong }`, `connectionString`, `concurrency: 1` (GPU serialization).
-- [ ] **1.11 Benchmark** a 4-min test song end-to-end. Record wall-time per step. **Gate:** separate step < 60s. If not, try alternate model. Commit `bench.md` with numbers.
-- [ ] **1.12 API: `index.ts`** Fastify bootstrap, cors, cookie parser, zod type provider. Register routes stubs.
-- [ ] **1.13 API: `routes/users.ts`** — POST create, reads cookie first; sets `karaoke_uid` cookie (httpOnly=false so JS can read id for ws auth; SameSite=Lax). Host-name logic per §6.
-- [ ] **1.14 API: `routes/search.ts`** — spawn `yt-dlp --dump-single-json --flat-playlist "ytsearch10:<q>"`. Parse entries. Filter `duration < 600 && !is_live`. Take first 6. Return shape from §6.
-- [ ] **1.15 API: `routes/queue.ts`** — POST: upsert Song (by `youtubeVideoId`), insert QueueItem (state=queued unless song already has `instrumentalObjectKey` → ready). If not ready: `graphile-worker` `addJob('process_song', { songId })`, create ProcessingJob. GET: current + upcoming query.
-- [ ] **1.16 API: `routes/audio.ts`** — range-aware stream from MinIO (presigned URL also acceptable; direct stream keeps MinIO internal).
-- [ ] **1.17 Web: `app/name/page.tsx`** — simple form → POST `/api/users` → redirect home. Store `userName` in localStorage (cookie is server's copy).
-- [ ] **1.18 Web: `app/page.tsx`** — now-playing panel (title/artist/requester, no lyrics yet in Phase 1), queue list (plain fetch), "Add a Song" button → `/search`, "Play here" toggle that shows/hides a hidden `<audio>` pointed at `/api/audio/<currentSongId>` with autoplay.
-- [ ] **1.19 Web: `app/search/page.tsx`** — input, debounced GET `/api/search`, result cards; tap → POST `/api/queue` → redirect home.
-- [ ] **1.20 Web: `lib/audio.ts`** — encapsulates the `<audio>` element, exposes `play()`, `pause()`, `seek()`, emits `onTimeUpdate(currentTime)`.
-- [ ] **1.21 Smoke test local** — `docker compose up`. On phone on same LAN: enter name, search "Imagine Dragons Believer", add, wait for processing badge, tap "Play here" → hear instrumental. Open a second phone → it also loads home but no audio plays until it taps "Play here" (which should take over). **Commit.**
+  - _Also shipped:_ `apps/worker/Dockerfile.nvidia` + `docker-compose.nvidia.yml` for the CUDA path (`nvidia/cuda:12.6.0-runtime-ubuntu22.04`, `nvidia-smi` sanity check instead of `clinfo`).
+- [x] **1.3 Pin** `requirements.txt`: OpenVINO triplet pinned in `apps/worker/python/requirements.txt`; CUDA triplet pinned in `apps/worker/python/requirements.nvidia.txt`.
+- [x] **1.4 `python/separate.py`** — argparse + `SEPARATOR_BACKEND` branch (`openvino` / `cuda` / `cpu`). Prints the instrumental output path to stdout. Fails fast if the requested GPU isn't detected.
+- [x] **1.5 Worker: `steps/download.ts`** — spawns `yt-dlp -f bestaudio -x --audio-format mp3 …`.
+- [x] **1.6 Worker: `steps/separate.ts`** — spawns `python3 separate.py`, parses stdout for instrumental path, hard timeout on step; logs `separate.py wall=<ms>ms` for bench.
+- [x] **1.7 Worker: `steps/lyrics.ts`** — GET `https://lrclib.net/api/get?…`.
+- [x] **1.8 Worker: `minioUpload.ts`** — `@aws-sdk/client-s3` against MinIO. Key: `instrumentals/<songId>.mp3`.
+- [x] **1.9 Worker: `tasks/processSong.ts`** — orchestrates download→separate→lyrics→upload, updates `ProcessingJob`, emits `NOTIFY song_progress` and `NOTIFY queue_updated` for the Phase 2 Socket.IO bridge to pick up.
+- [x] **1.10 Worker: `index.ts`** — `graphile-worker` `run` with `taskList: { process_song }`, `concurrency: 1`.
+- [x] **1.11 Benchmark** — **gate met.** See `bench.md`: `UVR-MDX-NET-Inst_HQ_3` on NVIDIA (CUDA EP), 4:35 song → separate 15.9s / total 20.6s (warm); 10s clip → separate 42.7s / total 45.8s (cold, model load).
+- [x] **1.12 API: `index.ts`** Fastify + cors + cookie + zod provider. Error handler coerces unhandled errors to 500 (see deferred item below).
+- [x] **1.13 API: `routes/users.ts`** — POST create, cookie `karaoke_uid` (httpOnly=false, SameSite=Lax), host-name logic via `hostService.ts`.
+- [x] **1.14 API: `routes/search.ts`** — `yt-dlp --dump-single-json --flat-playlist ytsearch10:…`, filtered to `duration < 600 && !is_live`, top 6.
+- [x] **1.15 API: `routes/queue.ts`** — POST upserts Song, inserts QueueItem, enqueues `process_song`; GET returns `{ current, upcoming[] }`.
+- [x] **1.16 API: `routes/audio.ts`** — range-aware stream from MinIO (`Accept-Ranges: bytes`, 206 partial).
+- [x] **1.17 Web: `app/name/page.tsx`** — form → `POST /api/users` → localStorage shadow → redirect home.
+- [x] **1.18 Web: `app/page.tsx`** — now-playing panel, polled queue (3s `setInterval`; will be replaced by Socket.IO in 2.8), "Play here" toggle + hidden `<audio>`.
+- [x] **1.19 Web: `app/search/page.tsx`** — debounced search + add-to-queue.
+- [x] **1.20 Web: `lib/audio.ts`** — `AudioController` wrapper: `play/pause/seek` + `onTimeUpdate/onEnded/onPlay/onPause/onError`.
+- [x] **1.21 Smoke test local** — user-verified: single-user flow plays the instrumental end-to-end; two-phone takeover / auto-advance are intentionally deferred (see Phase 2).
+
+**Phase 1 deferred items (carried into Phase 2 or later):**
+
+- Exclusive playback between browsers/phones — handled by Phase 2.5 (`playerService`) + 2.13 (`PlayerToggle` reacting to `player:changed`). Today both tabs play simultaneously.
+- Auto-advance on `ended` — handled by Phase 2.15 (`POST /api/playback/skip`, `state=played`, pick next `ready`).
+- yt-dlp "video unavailable" returns `500` — cosmetic. Should become `422 video_unavailable` with a UI message. Fold into Phase 3 queue/library polish or Phase 4 error UX (4.6).
+- Stale cookie after `docker compose down -v` — client trusts localStorage, so the user isn't bounced to `/name`. Low-priority dev ergonomics fix: on page load `GET /api/users/me`, clear localStorage + redirect on 401. Not a gate.
 
 ### Phase 2 — Multi-user + host + realtime
 
@@ -503,9 +517,12 @@ MINIO_ROOT_PASSWORD=change-me-long
 MINIO_BUCKET=karaoke
 
 # Worker / GPU
-AUDIO_SEP_MODEL=UVR-MDX-NET-Inst_HQ_3
-OV_DEVICE=GPU
-# override if host uses non-default GIDs for render/video:
+AUDIO_SEP_MODEL=UVR-MDX-NET-Inst_HQ_3.onnx
+# openvino = Intel Arc (docker-compose.yml)
+# cuda     = NVIDIA GPU (docker-compose.nvidia.yml)
+# cpu      = fallback, no GPU
+SEPARATOR_BACKEND=openvino
+# Intel Arc only — override if host uses non-default GIDs for render/video:
 # RENDER_GID=109
 # VIDEO_GID=44
 ```
@@ -537,7 +554,7 @@ Unit tests required (CI):
 
 ## 12. Risks & Open Questions (flag to user before coding)
 
-1. **Arc driver fragility.** Intel's compute stack on Linux has version-coupling landmines. The host must run kernel ≥ 6.2 and Intel's `intel-opencl-icd` ≥ 24.x. If the host is on an older kernel, this blocks everything. → ask user to confirm kernel + current `clinfo -l` output before Phase 1.
+1. **Arc driver fragility.** Intel's compute stack on Linux has version-coupling landmines. The host must run kernel ≥ 6.2 and Intel's `intel-opencl-icd` ≥ 24.x. If the host is on an older kernel, this blocks the OpenVINO path — the NVIDIA CUDA path (`docker-compose.nvidia.yml`) is a supported alternative and is what Phase 1 was benchmarked on (WSL2 + CUDA 12.6 runtime).
 2. **OpenVINO EP vs DirectML.** On Linux Arc, OpenVINO is the right call. On Windows Arc, DirectML is faster. Plan assumes Linux; confirm.
 3. **yt-dlp search ratelimits.** YouTube has begun aggressive IP blocks. Plan uses `yt-dlp` directly; if blocked, fallback is `yt-dlp --cookies-from-browser` or rotating proxies — **not shipped**. Flag as known limitation.
 4. **MinIO AGPL.** Fine for self-host; not fine for redistribution. Confirm user's use is self-host only.
