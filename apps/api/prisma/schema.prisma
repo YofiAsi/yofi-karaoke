@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String      @id @default(uuid()) @db.Uuid
+  name       String      @unique
+  isHost     Boolean     @default(false)
+  lastSeenAt DateTime    @default(now())
+  createdAt  DateTime    @default(now())
+  queueItems QueueItem[]
+
+  @@index([name])
+}
+
+model Song {
+  id                    String          @id @default(uuid()) @db.Uuid
+  youtubeVideoId        String          @unique
+  title                 String
+  artist                String
+  channel               String
+  durationSeconds       Int
+  thumbnailUrl          String
+  instrumentalObjectKey String?
+  originalObjectKey     String?
+  lyricsLrc             String?         @db.Text
+  lyricsSource          String?
+  createdAt             DateTime        @default(now())
+  queueItems            QueueItem[]
+  processingJobs        ProcessingJob[]
+
+  @@index([title])
+  @@index([artist])
+}
+
+enum QueueState {
+  queued
+  processing
+  ready
+  played
+  skipped
+  failed
+}
+
+model QueueItem {
+  id                String     @id @default(uuid()) @db.Uuid
+  songId            String     @db.Uuid
+  song              Song       @relation(fields: [songId], references: [id])
+  requestedByUserId String     @db.Uuid
+  requestedByUser   User       @relation(fields: [requestedByUserId], references: [id])
+  position          Int
+  state             QueueState @default(queued)
+  createdAt         DateTime   @default(now())
+  playedAt          DateTime?
+
+  @@index([state, position])
+}
+
+enum ProcessingStep {
+  pending
+  downloading
+  separating
+  fetching_lyrics
+  done
+  error
+}
+
+model ProcessingJob {
+  id           String         @id @default(uuid()) @db.Uuid
+  songId       String         @db.Uuid
+  song         Song           @relation(fields: [songId], references: [id])
+  step         ProcessingStep @default(pending)
+  progressPct  Int            @default(0)
+  errorMessage String?        @db.Text
+  startedAt    DateTime?
+  completedAt  DateTime?
+
+  @@index([songId])
+}
+
+model PlaybackState {
+  id                    Int       @id @default(1)
+  currentQueueItemId    String?   @db.Uuid
+  positionSeconds       Float     @default(0)
+  isPlaying             Boolean   @default(false)
+  hostUserId            String?   @db.Uuid
+  hostLastHeartbeatAt   DateTime?
+  playerUserId          String?   @db.Uuid
+  playerLastHeartbeatAt DateTime?
+  updatedAt             DateTime  @updatedAt
+}
