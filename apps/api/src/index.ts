@@ -13,6 +13,7 @@ import { registerUserRoutes } from "./routes/users.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerQueueRoutes } from "./routes/queue.js";
 import { registerAudioRoutes } from "./routes/audio.js";
+import { registerPlaybackRoutes } from "./routes/playback.js";
 import { setupSocketIO } from "./sockets/index.js";
 import { startBroadcastBridge } from "./sockets/broadcast.js";
 
@@ -40,6 +41,7 @@ async function build() {
   await registerSearchRoutes(app);
   await registerQueueRoutes(app);
   await registerAudioRoutes(app);
+  await registerPlaybackRoutes(app);
 
   app.setErrorHandler((err, _req, reply) => {
     const error = err as Error & { statusCode?: number };
