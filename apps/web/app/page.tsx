@@ -3,15 +3,28 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { QueueView, User } from "@karaoke/shared";
+import type {
+  QueueView,
+  User,
+  PlaybackStateView,
+  SongProgressEvent,
+} from "@karaoke/shared";
 import { api } from "@/lib/api";
 import { loadStoredUser } from "@/lib/user";
 import { AudioController } from "@/lib/audio";
+import { useSocket } from "@/lib/socket";
+import { NowPlaying } from "@/components/NowPlaying";
+import { QueueList } from "@/components/QueueList";
 
 export default function HomePage() {
   const router = useRouter();
+  const socket = useSocket();
   const [user, setUser] = useState<User | null>(null);
   const [queue, setQueue] = useState<QueueView | null>(null);
+  const [playbackState, setPlaybackState] = useState<PlaybackStateView | null>(null);
+  const [progress, setProgress] = useState<Map<string, SongProgressEvent>>(
+    () => new Map()
+  );
   const [isPlayingHere, setIsPlayingHere] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const controllerRef = useRef<AudioController | null>(null);
@@ -30,16 +43,43 @@ export default function HomePage() {
       const view = await api.get<QueueView>("/api/queue");
       setQueue(view);
     } catch {
-      /* ignore; will retry */
+      /* ignore */
     }
   }, []);
 
+  // Initial fetch + socket subscriptions
   useEffect(() => {
     if (!user) return;
+
+    // Fetch current state immediately so users see the queue before first event
     fetchQueue();
-    const id = setInterval(fetchQueue, 3_000);
-    return () => clearInterval(id);
-  }, [user, fetchQueue]);
+
+    function onQueueUpdated(data: QueueView) {
+      setQueue(data);
+    }
+
+    function onPlaybackState(data: PlaybackStateView) {
+      setPlaybackState(data);
+    }
+
+    function onSongProgress(data: SongProgressEvent) {
+      setProgress((prev) => {
+        const next = new Map(prev);
+        next.set(data.songId, data);
+        return next;
+      });
+    }
+
+    socket.on("queue:updated", onQueueUpdated);
+    socket.on("playback:state", onPlaybackState);
+    socket.on("song:progress", onSongProgress);
+
+    return () => {
+      socket.off("queue:updated", onQueueUpdated);
+      socket.off("playback:state", onPlaybackState);
+      socket.off("song:progress", onSongProgress);
+    };
+  }, [user, socket, fetchQueue]);
 
   const current = queue?.current ?? null;
   const currentAudioKey =
@@ -103,14 +143,9 @@ export default function HomePage() {
         <p className="text-xs uppercase tracking-widest text-neutral-500">
           Now playing
         </p>
-        {current ? (
+        <NowPlaying current={current} playbackState={playbackState} />
+        {current && (
           <>
-            <h2 className="text-2xl font-semibold leading-tight mt-1">
-              {current.song.title}
-            </h2>
-            <p className="text-neutral-400 text-sm mt-1">
-              {current.song.artist} · requested by {current.requestedByUserName}
-            </p>
             <button
               onClick={togglePlayHere}
               className={`mt-5 w-full rounded-xl py-4 font-semibold ${
@@ -130,10 +165,6 @@ export default function HomePage() {
               />
             )}
           </>
-        ) : (
-          <p className="text-neutral-500 mt-3">
-            Queue is empty. Add a song to start.
-          </p>
         )}
       </section>
 
@@ -141,48 +172,8 @@ export default function HomePage() {
         <h2 className="text-sm uppercase tracking-widest text-neutral-500 mb-3">
           Up next
         </h2>
-        {queue && queue.upcoming.length > 0 ? (
-          <ul className="flex flex-col gap-2">
-            {queue.upcoming.map((item) => (
-              <li
-                key={item.id}
-                className="rounded-xl bg-neutral-900 border border-neutral-800 p-3 flex items-center gap-3"
-              >
-                <img
-                  src={item.song.thumbnailUrl}
-                  alt=""
-                  className="h-12 w-12 rounded-md object-cover bg-neutral-800"
-                />
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium truncate">{item.song.title}</p>
-                  <p className="text-xs text-neutral-400 truncate">
-                    {item.song.artist} · {item.requestedByUserName}
-                  </p>
-                </div>
-                <StateBadge item={item} />
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-neutral-500">Nothing queued yet.</p>
-        )}
+        <QueueList items={queue?.upcoming ?? []} progress={progress} />
       </section>
     </main>
-  );
-}
-
-function StateBadge({ item }: { item: QueueView["upcoming"][number] }) {
-  if (item.state === "ready") {
-    return <span className="text-xs text-emerald-400">ready</span>;
-  }
-  if (item.state === "failed") {
-    return <span className="text-xs text-red-400">failed</span>;
-  }
-  const pct = item.progress?.progressPct ?? 0;
-  const step = item.progress?.step ?? "pending";
-  return (
-    <span className="text-xs text-neutral-400">
-      {step} · {pct}%
-    </span>
   );
 }
