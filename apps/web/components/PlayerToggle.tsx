@@ -13,7 +13,7 @@ interface PlayerToggleProps {
 
 export function PlayerToggle({
   currentSongId,
-  playbackState: _playbackState,
+  playbackState,
   currentUserId,
 }: PlayerToggleProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -23,6 +23,8 @@ export function PlayerToggle({
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // keep a ref so callbacks always see latest value without re-subscribing
   const isActiveRef = useRef(false);
+  // keep a ref so the ended handler always sees latest playbackState
+  const playbackStateRef = useRef(playbackState);
 
   function stopPlaying() {
     audioRef.current?.pause();
@@ -66,6 +68,11 @@ export function PlayerToggle({
     };
   }, []);
 
+  // Keep playbackStateRef in sync with the latest prop value
+  useEffect(() => {
+    playbackStateRef.current = playbackState;
+  }, [playbackState]);
+
   // Pause/reset when song changes
   useEffect(() => {
     if (isActiveRef.current) {
@@ -73,6 +80,33 @@ export function PlayerToggle({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSongId]);
+
+  // Handle audio ended — auto-advance or notify server
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el) return;
+
+    async function handleAudioEnded() {
+      if (!isActiveRef.current) return;
+      const socket = getSocket();
+      const state = playbackStateRef.current;
+      if (state?.hostUserId === currentUserId) {
+        // This device is both player and host — skip directly via API
+        await api.post("/api/playback/skip").catch(console.error);
+      } else {
+        // Player only — notify server; it will auto-advance after a 3s grace period
+        socket.emit("playback:ended");
+      }
+      stopPlaying();
+    }
+
+    el.addEventListener("ended", handleAudioEnded);
+    return () => {
+      el.removeEventListener("ended", handleAudioEnded);
+    };
+    // currentUserId is stable; stopPlaying/api/getSocket are module-level — no dep needed
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserId]);
 
   // Cleanup intervals on unmount
   useEffect(() => {
