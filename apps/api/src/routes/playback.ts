@@ -54,7 +54,7 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
       where: { id: 1 },
       data: { isPlaying: true },
     });
-    await notifyPlaybackState();
+    notifyPlaybackState().catch((err) => req.log.error({ err }, "notifyPlaybackState failed"));
     return reply.code(204).send();
   });
 
@@ -65,7 +65,7 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
       where: { id: 1 },
       data: { isPlaying: false },
     });
-    await notifyPlaybackState();
+    notifyPlaybackState().catch((err) => req.log.error({ err }, "notifyPlaybackState failed"));
     return reply.code(204).send();
   });
 
@@ -98,8 +98,8 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
       },
     });
 
-    await notifyPlaybackState();
-    await notifyQueueUpdated();
+    notifyPlaybackState().catch((err) => req.log.error({ err }, "notifyPlaybackState failed"));
+    notifyQueueUpdated().catch((err) => req.log.error({ err }, "notifyQueueUpdated failed"));
 
     return reply.code(204).send();
   });
@@ -127,8 +127,8 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
           isPlaying: true,
         },
       });
-      await notifyPlaybackState();
-      await notifyQueueUpdated();
+      notifyPlaybackState().catch((err) => req.log.error({ err }, "notifyPlaybackState failed"));
+      notifyQueueUpdated().catch((err) => req.log.error({ err }, "notifyQueueUpdated failed"));
     }
 
     return reply.code(204).send();
@@ -144,7 +144,7 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
         where: { id: 1 },
         data: { positionSeconds },
       });
-      await notifyPlaybackState();
+      notifyPlaybackState().catch((err) => req.log.error({ err }, "notifyPlaybackState failed"));
       return reply.code(204).send();
     },
   });
