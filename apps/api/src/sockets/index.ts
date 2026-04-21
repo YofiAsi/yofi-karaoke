@@ -28,6 +28,11 @@ export function setupSocketIO(httpServer: HttpServer): Server {
   return io;
 }
 
+/**
+ * Returns the initialised Socket.IO Server instance.
+ * This is the canonical export of `io` — consumers import `getIO` because
+ * `io` is lazily initialised and cannot be a static named export.
+ */
 export function getIO(): Server {
   if (!io) throw new Error("Socket.IO not initialised — call setupSocketIO first");
   return io;
