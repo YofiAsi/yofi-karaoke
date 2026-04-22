@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
@@ -117,7 +118,17 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
 
   return (
     <AppShellContext.Provider
-      value={{ user, queue, playbackState, progress, lrcLines, plainLyrics, audioPosition, setAudioPosition }}
+      value={{
+        user,
+        queue,
+        playbackState,
+        progress,
+        lrcLines,
+        plainLyrics,
+        audioPosition,
+        setAudioPosition,
+        refetchQueue: fetchQueue,
+      }}
     >
       <PlayerToggle
         currentSongId={currentAudioKey}
@@ -126,6 +137,18 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         onTick={setAudioPosition}
       />
       {children}
+      <nav
+        className="fixed bottom-0 left-0 right-0 z-30 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur-md px-4 pt-2 flex justify-center"
+        style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom, 0px))" }}
+        aria-label="Primary"
+      >
+        <Link
+          href="/search"
+          className="w-full max-w-md rounded-2xl bg-white text-black py-3.5 text-center text-base font-semibold min-h-12 flex items-center justify-center active:opacity-90"
+        >
+          Add a song
+        </Link>
+      </nav>
     </AppShellContext.Provider>
   );
 }

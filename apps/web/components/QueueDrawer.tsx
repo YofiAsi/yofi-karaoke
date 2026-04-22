@@ -9,9 +9,18 @@ interface QueueDrawerProps {
   onClose: () => void;
   items: QueueItem[];
   progress: Map<string, SongProgressEvent>;
+  canRetryAsHost: boolean;
+  onQueueChanged: () => Promise<void>;
 }
 
-export function QueueDrawer({ open, onClose, items, progress }: QueueDrawerProps) {
+export function QueueDrawer({
+  open,
+  onClose,
+  items,
+  progress,
+  canRetryAsHost,
+  onQueueChanged,
+}: QueueDrawerProps) {
   useEffect(() => {
     if (!open) return;
     function onKeyDown(e: KeyboardEvent) {
@@ -47,7 +56,12 @@ export function QueueDrawer({ open, onClose, items, progress }: QueueDrawerProps
             Close
           </button>
         </div>
-        <QueueList items={items} progress={progress} />
+        <QueueList
+          items={items}
+          progress={progress}
+          canRetryAsHost={canRetryAsHost}
+          onQueueChanged={onQueueChanged}
+        />
       </div>
     </>
   );

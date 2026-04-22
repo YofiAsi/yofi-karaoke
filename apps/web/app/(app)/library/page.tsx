@@ -99,7 +99,7 @@ export default function LibraryPage() {
   const hasMore = songs.length < total;
 
   return (
-    <main className="min-h-screen p-5 flex flex-col gap-5 pb-20">
+    <main className="min-h-screen p-5 flex flex-col gap-5 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))]">
       <header className="flex items-center gap-3">
         <Link href="/" className="text-neutral-400 text-sm">
           ← Back

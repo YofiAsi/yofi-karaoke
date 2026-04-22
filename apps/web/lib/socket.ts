@@ -31,21 +31,19 @@ export type AppSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 let _socket: AppSocket | null = null;
 
-/**
- * Resolve the Socket.IO server URL.
- *
- * Next.js `rewrites()` cannot proxy WebSocket upgrades, so we can't route
- * Socket.IO through the web origin in local/docker setups. We connect the
- * browser directly to the api container's exposed port instead.
- *
- * Override via `NEXT_PUBLIC_WS_URL` for deployments where a real reverse
- * proxy (Dokploy/Traefik, nginx, etc.) terminates WSS on the public origin.
- */
 function resolveSocketUrl(): string | undefined {
   if (typeof window === "undefined") return undefined;
-  const override = process.env.NEXT_PUBLIC_WS_URL;
-  if (override && /^https?:\/\//.test(override)) return override;
-  const { protocol, hostname } = window.location;
+  const raw = (process.env.NEXT_PUBLIC_WS_URL ?? "").trim();
+  if (/^wss?:\/\//i.test(raw)) return raw;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw === "same-origin" || raw === "" || raw.startsWith("/")) {
+    return window.location.origin;
+  }
+  const { protocol, hostname, port } = window.location;
+  const local = hostname === "localhost" || hostname === "127.0.0.1";
+  if (local && port === "3000" && protocol === "http:") {
+    return `http://${hostname}:4000`;
+  }
   return `${protocol}//${hostname}:4000`;
 }
 
