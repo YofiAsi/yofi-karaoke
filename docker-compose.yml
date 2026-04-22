@@ -11,6 +11,7 @@ services:
       - api
     ports:
       - "3000:3000"
+    restart: unless-stopped
 
   api:
     image: karaoke-api
@@ -28,10 +29,13 @@ services:
       - PLAYER_STALE_SECONDS=20
       - SESSION_SECRET=${SESSION_SECRET}
     depends_on:
-      - postgres
-      - minio
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
     ports:
       - "4000:4000"
+    restart: unless-stopped
 
   worker:
     image: karaoke-worker
@@ -52,9 +56,13 @@ services:
       - "${RENDER_GID:-109}"
       - "${VIDEO_GID:-44}"
     depends_on:
-      - postgres
-      - minio
-      - api
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      api:
+        condition: service_started
+    restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine
@@ -66,6 +74,12 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U karaoke -d karaoke"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
 
   minio:
     image: minio/minio:latest
@@ -78,6 +92,7 @@ services:
       - "9001:9001"
     volumes:
       - miniodata:/data
+    restart: unless-stopped
 
 volumes:
   pgdata:
