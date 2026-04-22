@@ -134,10 +134,11 @@ export const processSong: Task = async (payload, helpers) => {
     await pool.query(
       `UPDATE "Song"
          SET "instrumentalObjectKey" = $2,
-             "lyricsLrc" = $3,
-             "lyricsSource" = $4
+             "lyricsLrc"   = $3,
+             "lyricsPlain" = $4,
+             "lyricsSource" = $5
        WHERE id = $1`,
-      [songId, instrumentalKey, lyrics.syncedLyrics, lyrics.source],
+      [songId, instrumentalKey, lyrics.syncedLyrics, lyrics.plainLyrics, lyrics.source],
     );
 
     await markQueueItemsReady(songId);
