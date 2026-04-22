@@ -2,6 +2,7 @@
 **/.next
 **/dist
 **/.turbo
+**/*.tsbuildinfo
 .git
 .env
 .env.*
