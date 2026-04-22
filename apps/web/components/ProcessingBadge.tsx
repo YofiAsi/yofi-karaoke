@@ -10,12 +10,7 @@ export function ProcessingBadge({ item, liveProgress }: ProcessingBadgeProps) {
     return <span className="text-xs text-emerald-400">ready</span>;
   }
   if (item.state === "failed") {
-    const msg = liveProgress?.errorMessage ?? item.progress?.errorMessage;
-    return (
-      <span className="text-xs text-red-400" title={msg ?? undefined}>
-        failed
-      </span>
-    );
+    return <span className="text-xs font-semibold uppercase tracking-wide text-red-400">failed</span>;
   }
   if (item.state === "processing") {
     // Prefer live socket data over static queue snapshot

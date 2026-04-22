@@ -30,9 +30,13 @@ export function LyricsView({
     activeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [activeIdx]);
 
+  const lineClass = expandToFill
+    ? "text-[clamp(1.35rem,4.2vw,1.9rem)] font-semibold leading-snug transition-all duration-300"
+    : "text-2xl font-semibold leading-snug transition-all duration-300";
+
   const scrollAreaClass = expandToFill
-    ? "flex-1 min-h-0 overflow-y-auto px-1 py-4 space-y-4 scroll-smooth"
-    : "overflow-y-auto max-h-72 px-1 py-4 space-y-4 scroll-smooth";
+    ? "flex-1 min-h-0 overflow-y-auto px-1 py-4 space-y-4 scroll-smooth touch-pan-y"
+    : "overflow-y-auto max-h-72 px-1 py-4 space-y-4 scroll-smooth touch-pan-y";
 
   if (lines.length === 0 && plainText) {
     const plainLines = plainText.split("\n").filter((l) => l.trim().length > 0);
@@ -69,7 +73,7 @@ export function LyricsView({
         <p
           key={i}
           ref={i === activeIdx ? activeRef : undefined}
-          className={`text-2xl font-semibold leading-snug transition-all duration-300 ${
+          className={`${lineClass} ${
             i === activeIdx ? "text-white" : "text-neutral-600"
           }`}
         >

@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import { QueueState } from "@prisma/client";
 import {
   SeekBodySchema,
@@ -9,18 +9,9 @@ import {
 } from "@karaoke/shared";
 import { prisma } from "../db.js";
 import { requireUser } from "../auth/userCookie.js";
+import { requireCurrentHost } from "../auth/requireCurrentHost.js";
 import { getIO } from "../sockets/index.js";
 import * as playerService from "../player/playerService.js";
-
-async function requireHost(req: FastifyRequest): Promise<void> {
-  const user = await requireUser(req);
-  const playback = await prisma.playbackState.findUnique({ where: { id: 1 } });
-  if (!user.isHost || playback?.hostUserId !== user.id) {
-    const err = new Error("forbidden");
-    (err as Error & { statusCode?: number }).statusCode = 403;
-    throw err;
-  }
-}
 
 async function notifyPlaybackState(): Promise<void> {
   const state = await prisma.playbackState.findUniqueOrThrow({ where: { id: 1 } });
@@ -60,7 +51,7 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
   });
 
   app.post("/api/playback/play", async (req, reply) => {
-    await requireHost(req);
+    await requireCurrentHost(req);
     await prisma.playbackState.update({
       where: { id: 1 },
       data: { isPlaying: true },
@@ -71,7 +62,7 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
 
   // POST /api/playback/pause — host only
   app.post("/api/playback/pause", async (req, reply) => {
-    await requireHost(req);
+    await requireCurrentHost(req);
     await prisma.playbackState.update({
       where: { id: 1 },
       data: { isPlaying: false },
@@ -82,7 +73,7 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
 
   // POST /api/playback/skip — host only
   app.post("/api/playback/skip", async (req, reply) => {
-    await requireHost(req);
+    await requireCurrentHost(req);
 
     const current = await prisma.playbackState.findUniqueOrThrow({ where: { id: 1 } });
 
@@ -117,7 +108,7 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
 
   // POST /api/playback/previous — host only
   app.post("/api/playback/previous", async (req, reply) => {
-    await requireHost(req);
+    await requireCurrentHost(req);
 
     // Load last played item
     const lastPlayed = await prisma.queueItem.findFirst({
@@ -149,7 +140,7 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
   app.post("/api/playback/seek", {
     schema: { body: SeekBodySchema },
     handler: async (req, reply) => {
-      await requireHost(req);
+      await requireCurrentHost(req);
       const { positionSeconds } = req.body as { positionSeconds: number };
       await prisma.playbackState.update({
         where: { id: 1 },

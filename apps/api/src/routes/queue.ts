@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { QueueState } from "@prisma/client";
 import {
   AddQueueBodySchema,
@@ -9,7 +10,9 @@ import {
 } from "@karaoke/shared";
 import { prisma } from "../db.js";
 import { requireUser } from "../auth/userCookie.js";
+import { requireCurrentHost } from "../auth/requireCurrentHost.js";
 import { ytdlpInfo } from "../ytdlp.js";
+import { isYtVideoUnavailableMessage } from "../ytdlp/isVideoUnavailable.js";
 import { enqueueProcessSong } from "../jobs/enqueueProcessSong.js";
 
 export async function notify(channel: string, payload: object): Promise<void> {
@@ -29,7 +32,12 @@ async function queueView(): Promise<QueueView> {
   const items = await prisma.queueItem.findMany({
     where: {
       state: {
-        in: [QueueState.queued, QueueState.processing, QueueState.ready],
+        in: [
+          QueueState.queued,
+          QueueState.processing,
+          QueueState.ready,
+          QueueState.failed,
+        ],
       },
     },
     orderBy: { position: "asc" },
@@ -100,7 +108,16 @@ export async function registerQueueRoutes(app: FastifyInstance): Promise<void> {
       let needsJob = false;
 
       if (!song) {
-        const info = await ytdlpInfo(youtubeVideoId);
+        let info;
+        try {
+          info = await ytdlpInfo(youtubeVideoId);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (isYtVideoUnavailableMessage(msg)) {
+            return reply.code(422).send({ error: "video_unavailable" });
+          }
+          throw e;
+        }
         const duration = Math.round(info.duration ?? 0);
         const thumb =
           info.thumbnail ??
@@ -124,7 +141,17 @@ export async function registerQueueRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const activeItem = await prisma.queueItem.findFirst({
-        where: { songId: song.id, state: { in: [QueueState.queued, QueueState.processing, QueueState.ready] } },
+        where: {
+          songId: song.id,
+          state: {
+            in: [
+              QueueState.queued,
+              QueueState.processing,
+              QueueState.ready,
+              QueueState.failed,
+            ],
+          },
+        },
       });
       if (activeItem) {
         return reply.code(409).send({ error: "already_queued" });
@@ -160,6 +187,55 @@ export async function registerQueueRoutes(app: FastifyInstance): Promise<void> {
       });
     },
   });
+
+  app.post(
+    "/api/queue/items/:queueItemId/retry",
+    {
+      schema: {
+        params: z.object({ queueItemId: z.string().uuid() }),
+      },
+    },
+    async (req, reply) => {
+      await requireCurrentHost(req);
+      const { queueItemId } = req.params as { queueItemId: string };
+      const item = await prisma.queueItem.findUnique({
+        where: { id: queueItemId },
+        include: { song: true },
+      });
+      if (!item) return reply.code(404).send({ error: "not_found" });
+      if (item.state !== QueueState.failed) {
+        return reply.code(400).send({ error: "not_failed" });
+      }
+      if (item.song.instrumentalObjectKey) {
+        return reply.code(400).send({ error: "song_ready" });
+      }
+      const otherActive = await prisma.queueItem.findFirst({
+        where: {
+          songId: item.songId,
+          id: { not: item.id },
+          state: {
+            in: [QueueState.queued, QueueState.processing, QueueState.ready],
+          },
+        },
+      });
+      if (otherActive) {
+        return reply.code(409).send({ error: "song_active_elsewhere" });
+      }
+      await prisma.$transaction(async (tx) => {
+        await tx.queueItem.update({
+          where: { id: item.id },
+          data: { state: QueueState.processing },
+        });
+        await tx.processingJob.deleteMany({ where: { songId: item.songId } });
+        await tx.processingJob.create({
+          data: { songId: item.songId, step: "pending", progressPct: 0 },
+        });
+      });
+      await enqueueProcessSong(item.songId);
+      await notify(PgNotifyChannels.queueUpdated, { reason: "retry", queueItemId: item.id });
+      return reply.send({ ok: true });
+    },
+  );
 
   app.get("/api/queue", async (_req, reply) => {
     const view = await queueView();

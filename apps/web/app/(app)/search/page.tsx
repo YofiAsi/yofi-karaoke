@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { SearchResultItem } from "@karaoke/shared";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useAppShell } from "../AppShellContext";
 import { useRouter } from "next/navigation";
 
@@ -39,8 +39,12 @@ export default function SearchPage() {
         );
         setResults(data);
         setError(null);
-      } catch {
-        setError("Search failed. Try again.");
+      } catch (e) {
+        if (e instanceof ApiError && e.code === "video_unavailable") {
+          setError("That video is unavailable or private.");
+        } else {
+          setError("Search failed. Try again.");
+        }
       } finally {
         setLoading(false);
       }
@@ -55,8 +59,12 @@ export default function SearchPage() {
     try {
       await api.post("/api/queue", { youtubeVideoId: item.youtubeVideoId });
       router.push("/");
-    } catch {
-      setError("Could not add to queue.");
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "video_unavailable") {
+        setError("That video is unavailable or private.");
+      } else {
+        setError("Could not add to queue.");
+      }
     } finally {
       setSubmitting(null);
     }
@@ -65,7 +73,7 @@ export default function SearchPage() {
   if (!user) return null;
 
   return (
-    <main className="min-h-screen p-5 flex flex-col gap-5">
+    <main className="min-h-screen p-5 flex flex-col gap-5 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))]">
       <header className="flex items-center gap-3">
         <Link href="/" className="text-neutral-400 text-sm">
           ← Back

@@ -27,7 +27,29 @@ export function PlayerToggle({
   onTick,
 }: PlayerToggleProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const wakeRef = useRef<WakeLockSentinel | null>(null);
   const [blocked, setBlocked] = useState(false);
+  const [bgTabWarn, setBgTabWarn] = useState(false);
+
+  function releaseWake() {
+    const w = wakeRef.current;
+    wakeRef.current = null;
+    void w?.release();
+  }
+
+  async function acquireWake() {
+    if (!("wakeLock" in navigator) || !navigator.wakeLock) return;
+    try {
+      releaseWake();
+      const lock = await navigator.wakeLock.request("screen");
+      wakeRef.current = lock;
+      lock.addEventListener("release", () => {
+        if (wakeRef.current === lock) wakeRef.current = null;
+      });
+    } catch {
+      /* ignore */
+    }
+  }
 
   // Claim the player role on mount + 10s heartbeat, release on unmount.
   // The claim keeps PlaybackState.playerUserId in sync so server-side features
@@ -43,6 +65,23 @@ export function PlayerToggle({
       api.post("/api/player/release").catch(console.error);
     };
   }, [isHost]);
+
+  useEffect(() => {
+    if (!isHost) return;
+    function onVis() {
+      const el = audioRef.current;
+      if (document.hidden && el && !el.paused) setBgTabWarn(true);
+      else setBgTabWarn(false);
+    }
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [isHost]);
+
+  useEffect(() => {
+    return () => {
+      releaseWake();
+    };
+  }, []);
 
   // Emit 1Hz position while audio is actually playing (for lyric sync in Phase 3).
   useEffect(() => {
@@ -76,10 +115,14 @@ export function PlayerToggle({
     if (!el || !playbackState) return;
     if (playbackState.isPlaying && el.paused) {
       el.play()
-        .then(() => setBlocked(false))
+        .then(() => {
+          setBlocked(false);
+          void acquireWake();
+        })
         .catch(() => setBlocked(true));
     } else if (!playbackState.isPlaying && !el.paused) {
       el.pause();
+      releaseWake();
     }
   }, [isHost, playbackState?.isPlaying, currentSongId]);
 
@@ -122,6 +165,7 @@ export function PlayerToggle({
     try {
       await el.play();
       setBlocked(false);
+      void acquireWake();
     } catch (err) {
       console.error("audio unblock failed", err);
     }
@@ -133,10 +177,17 @@ export function PlayerToggle({
   return (
     <div className="mt-4">
       <audio ref={audioRef} preload="metadata" playsInline />
+      {bgTabWarn ? (
+        <p className="text-xs text-amber-400/90 mb-2 px-1">
+          This tab is in the background — iOS may pause audio. Keep the screen on and the
+          tab visible while hosting playback.
+        </p>
+      ) : null}
       {blocked && (
         <button
+          type="button"
           onClick={handleUnblock}
-          className="w-full rounded-xl bg-white text-black py-4 font-semibold"
+          className="w-full rounded-xl bg-white text-black py-4 font-semibold min-h-12"
         >
           ▶ Tap to start audio
         </button>

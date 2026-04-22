@@ -9,8 +9,16 @@ import { LyricsView } from "@/components/LyricsView";
 import { QueueDrawer } from "@/components/QueueDrawer";
 
 export default function HomePage() {
-  const { user, queue, playbackState, progress, lrcLines, plainLyrics, audioPosition } =
-    useAppShell();
+  const {
+    user,
+    queue,
+    playbackState,
+    progress,
+    lrcLines,
+    plainLyrics,
+    audioPosition,
+    refetchQueue,
+  } = useAppShell();
   const [queueOpen, setQueueOpen] = useState(false);
 
   if (!user) return null;
@@ -21,7 +29,10 @@ export default function HomePage() {
 
   return (
     <main className="min-h-dvh flex flex-col">
-      <header className="shrink-0 flex items-center justify-between px-5 pt-5 pb-3">
+      <header
+        className="shrink-0 flex items-center justify-between px-5 pb-3"
+        style={{ paddingTop: "max(1.25rem, env(safe-area-inset-top, 0px))" }}
+      >
         <div>
           <p className="text-xs uppercase tracking-widest text-neutral-500">Karaoke</p>
           <h1 className="text-xl font-semibold">Hi, {user.name}</h1>
@@ -30,27 +41,22 @@ export default function HomePage() {
           {user.isHost && (
             <Link
               href="/library"
-              className="rounded-full border border-neutral-700 text-neutral-300 px-4 py-2 text-sm font-semibold"
+              className="rounded-full border border-neutral-700 text-neutral-300 px-4 py-2.5 text-sm font-semibold min-h-11 inline-flex items-center"
             >
               Library
             </Link>
           )}
           <button
+            type="button"
             onClick={() => setQueueOpen(true)}
-            className="rounded-full border border-neutral-700 text-neutral-300 px-4 py-2 text-sm font-semibold"
+            className="rounded-full border border-neutral-700 text-neutral-300 px-4 py-2.5 text-sm font-semibold min-h-11 inline-flex items-center"
           >
             Queue{upcomingCount > 0 ? ` · ${upcomingCount}` : ""}
           </button>
-          <Link
-            href="/search"
-            className="rounded-full bg-white text-black px-4 py-2 text-sm font-semibold"
-          >
-            + Add song
-          </Link>
         </div>
       </header>
 
-      <section className="flex-1 flex flex-col min-h-0 w-full bg-neutral-900 border-t border-neutral-800 px-5 pb-28 pt-4">
+      <section className="flex-1 flex flex-col min-h-0 w-full bg-neutral-900 border-t border-neutral-800 px-5 pt-4 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))]">
         <p className="text-xs uppercase tracking-widest text-neutral-500 shrink-0">
           Now playing
         </p>
@@ -77,6 +83,10 @@ export default function HomePage() {
         onClose={() => setQueueOpen(false)}
         items={upcoming}
         progress={progress}
+        canRetryAsHost={
+          !!user.isHost && playbackState?.hostUserId === user.id
+        }
+        onQueueChanged={refetchQueue}
       />
     </main>
   );

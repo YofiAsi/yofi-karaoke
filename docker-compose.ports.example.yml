@@ -1,0 +1,19 @@
+# Local development: publish ports without editing docker-compose.yml.
+#   cp docker-compose.ports.example.yml docker-compose.override.yml
+# docker-compose.override.yml is gitignored. Then:
+#   docker compose up -d --build
+
+services:
+  web:
+    ports:
+      - "3000:3000"
+  api:
+    ports:
+      - "4000:4000"
+  postgres:
+    ports:
+      - "5432:5432"
+  minio:
+    ports:
+      - "9000:9000"
+      - "9001:9001"

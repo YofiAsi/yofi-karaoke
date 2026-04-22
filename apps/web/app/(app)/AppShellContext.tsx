@@ -18,6 +18,7 @@ export interface AppShellState {
   plainLyrics: string | null;
   audioPosition: number | null;
   setAudioPosition: (pos: number) => void;
+  refetchQueue: () => Promise<void>;
 }
 
 export const AppShellContext = createContext<AppShellState | null>(null);
