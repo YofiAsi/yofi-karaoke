@@ -6,3 +6,4 @@ dist/
 apps/worker/python/__pycache__
 models/
 .worktrees/
+docker-compose.override.yml

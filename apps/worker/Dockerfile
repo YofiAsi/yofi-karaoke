@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
   curl \
   gnupg \
   ca-certificates \
+  procps \
   python3.11 \
   python3-pip \
   ffmpeg \
