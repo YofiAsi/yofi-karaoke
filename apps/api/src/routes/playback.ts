@@ -47,7 +47,18 @@ async function notifyQueueUpdated(): Promise<void> {
 }
 
 export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void> {
-  // POST /api/playback/play — host only
+  app.get("/api/playback", async (_req, reply) => {
+    const state = await prisma.playbackState.findUniqueOrThrow({ where: { id: 1 } });
+    const payload: PlaybackStateView = {
+      currentQueueItemId: state.currentQueueItemId ?? null,
+      positionSeconds: state.positionSeconds,
+      isPlaying: state.isPlaying,
+      hostUserId: state.hostUserId ?? null,
+      playerUserId: state.playerUserId ?? null,
+    };
+    return reply.send(payload);
+  });
+
   app.post("/api/playback/play", async (req, reply) => {
     await requireHost(req);
     await prisma.playbackState.update({

@@ -39,7 +39,9 @@ Host has a Linux box with a GPU (originally an Intel Arc A750; the repo also shi
                  yt-dlp, audio-separator, LRCLIB
 ```
 
-**Player vs. viewer:** every phone's home screen shows now-playing + lyrics + queue. Exactly one phone at a time holds the "player" role — its `<audio>` element plays, and it POSTs its `currentTime` to the server so other phones' lyric highlighting stays in sync. Any phone can claim the player role via a button ("Play here"); claiming takes over from the previous one. Host controls (play/pause/skip/prev/seek) are separate from player role — host can be any phone, including a non-player phone.
+**Player vs. viewer:** every phone's home screen shows now-playing + lyrics + queue. Exactly one phone at a time holds the "player" role — its `<audio>` element plays, and it POSTs its `currentTime` to the server so other phones' lyric highlighting stays in sync.
+
+**Phase 2 decision — host is the player.** The original plan allowed any phone to claim the player role via a "Play here" button. During Phase 2 smoke testing this was collapsed: only the host's device plays audio. The host's home page renders a hidden `<audio>` element that auto-reacts to `PlaybackState` (play/pause/seek/song switch). Guests don't see any player UI and never emit audio. The `/api/player/claim|release|heartbeat` endpoints are still in place (host auto-claims on mount) so the stale-takeover machinery and `playback:tick` routing keep working, but the UI surface for arbitrary-phone-as-player is gone. Scenarios 3/4/5/8 in `bench-phase2.md` and Verification steps 4/5/10 in §11 no longer apply as written — they're preserved for reference but should be read through the "host = player" lens.
 
 **Request flow (add song):**
 1. UI POST `/api/search?q=...` → api shells `yt-dlp ytsearch6:...` → 6 filtered results.
@@ -212,6 +214,8 @@ Add raw SQL migration: `ALTER TABLE "PlaybackState" ADD CONSTRAINT singleton CHE
 | POST | `/api/queue` | `{ youtubeVideoId }` | `{ queueItemId, songId, state }` |
 | GET | `/api/queue` | — | `{ current, upcoming[] }` with song + requester + state |
 | GET | `/api/library` | `?q=&limit=&offset=` | `{ items: Song[], total }` |
+| GET | `/api/playback` | — | `PlaybackStateView` — current `{ currentQueueItemId, positionSeconds, isPlaying, hostUserId, playerUserId }` snapshot (added in Phase 2 so clients can seed state before the first `playback:state` event) |
+| GET | `/api/health` | — | `{ ok: true }` — registered under `/api/*` so it routes cleanly through the Next.js rewrite |
 | POST | `/api/library/:songId/requeue` | — | same as POST `/api/queue` but skips processing if `instrumentalObjectKey` set |
 | POST | `/api/playback/play` | — | `204` (host-only) |
 | POST | `/api/playback/pause` | — | `204` (host-only) |
@@ -230,12 +234,12 @@ Add raw SQL migration: `ALTER TABLE "PlaybackState" ADD CONSTRAINT singleton CHE
 
 | Event | Payload |
 |---|---|
-| `queue:updated` | `{ current, upcoming[] }` (same shape as GET) |
+| `queue:updated` | `{ reason, ... }` — signal only; clients refetch `GET /api/queue`. (Plan originally shipped the full `QueueView` in the payload; implementation uses a signal + refetch because the NOTIFY channel is the wire format and we don't want to duplicate `queueView()` at every publish site.) |
 | `song:progress` | `{ songId, step, progressPct, errorMessage? }` |
-| `playback:state` | `{ currentQueueItemId, positionSeconds, isPlaying, hostUserId, playerUserId }` |
-| `playback:tick` | `{ positionSeconds }` (high-frequency, ~1Hz, from active player → all clients for lyric sync) |
-| `host:changed` | `{ hostUserId, hostUserName }` |
-| `player:changed` | `{ playerUserId, playerUserName }` |
+| `playback:state` | `PlaybackStateView` (full snapshot) |
+| `playback:tick` | `{ positionSeconds }` (~1Hz from the active player → all clients for lyric sync and host seek-bar progression) |
+| `host:changed` | `{ hostUserId, hostUserName }` — clients refetch `/api/playback` on receipt |
+| `player:changed` | `{ playerUserId, playerUserName }` — clients refetch `/api/playback` on receipt |
 
 ### Socket.IO events (client → server, host-only; alt to REST)
 `playback:play`, `playback:pause`, `playback:skip`, `playback:previous`, `playback:seek { positionSeconds }` — REST is authoritative; these are optimistic.
@@ -320,7 +324,10 @@ volumes:
   miniodata:
 ```
 
-**Traffic routing (no labels):** Next.js is the only public service. Configure `next.config.ts` with `rewrites()` so `/api/*` → `http://api:4000/*` and `/socket.io/*` → `http://api:4000/socket.io/*` (and `ws: true` on the rewrite). Dokploy's Traefik layer only needs the `web` service reachable on port 3000; everything else stays on the default compose network Dokploy creates.
+**Traffic routing:** Next.js `rewrites()` proxy `/api/*` to `http://api:4000/api/*` — this works for plain HTTP. Socket.IO cannot go through the rewrite because **Next.js rewrites do not proxy WebSocket upgrades** (see [vercel/next.js#33064](https://github.com/vercel/next.js/issues/33064); the `ws: true` pattern belongs to `http-proxy-middleware`, not Next.js). Two modes are supported:
+
+- **Local / docker-compose:** the browser connects Socket.IO directly to the api container on its exposed port (`http://<host>:4000`). `apps/web/lib/socket.ts` resolves the URL from `window.location.hostname` unless `NEXT_PUBLIC_WS_URL` is set. Cookies are scoped by host (not port), so the `karaoke_uid` session survives the port change, and `@fastify/cors` / Socket.IO CORS both use `origin: true + credentials: true`.
+- **Dokploy production:** set `NEXT_PUBLIC_WS_URL` to the public origin (e.g. `https://karaoke.example.com`) at build time; Traefik terminates WSS on the public domain and upgrades are forwarded to the api service. Dokploy handles this layer — no Traefik labels in compose.
 
 **GPU GIDs:** `render`/`video` GIDs differ per host. `.env` takes `RENDER_GID` and `VIDEO_GID` (defaults 109 / 44). `scripts/detect-gpu-gids.sh` greps `getent group render video` and emits an env fragment. Document in README.
 
@@ -450,25 +457,36 @@ Ship order: DB → worker vocal sep → api minimal → web minimal. At end of p
 - yt-dlp "video unavailable" returns `500` — cosmetic. Should become `422 video_unavailable` with a UI message. Fold into Phase 3 queue/library polish or Phase 4 error UX (4.6).
 - Stale cookie after `docker compose down -v` — client trusts localStorage, so the user isn't bounced to `/name`. Low-priority dev ergonomics fix: on page load `GET /api/users/me`, clear localStorage + redirect on 401. Not a gate.
 
-### Phase 2 — Multi-user + host + realtime
+### Phase 2 — Multi-user + host + realtime — DONE
 
-- [ ] **2.1 Socket.IO server** (`api/src/sockets/index.ts`) — attach to fastify's HTTP server. Auth via `karaoke_uid` cookie.
-- [ ] **2.2 Postgres LISTEN bridge** (`sockets/broadcast.ts`) — dedicated pg client LISTENs on `queue_updated`, `song_progress`, `playback_state`, `host_changed`, `player_changed`. On notify: `io.emit(channel, payload)`.
-- [ ] **2.3 API triggers** — after each mutation (queue insert/update, playback state write, host change, player change), issue `NOTIFY` from the same tx.
-- [ ] **2.4 Host service** (`host/hostService.ts`) — takeover rules + heartbeat; unit tests for stale-takeover and conflict paths.
-- [ ] **2.5 Player service** (`player/playerService.ts`) — claim/release/heartbeat; `PLAYER_STALE_SECONDS` takeover rule (same pattern as host).
-- [ ] **2.6 Playback routes** (`routes/playback.ts`) — mutate PlaybackState; host-only middleware. `/api/playback/position` restricted to the current `playerUserId`.
-- [ ] **2.7 Web: `lib/socket.ts`** — singleton client, auto-reconnect, typed events.
-- [ ] **2.8 Web live queue** — swap fetch for subscribe-to-`queue:updated` with initial fetch.
-- [ ] **2.9 Web now-playing** — subscribe to `playback:state`; render `NowPlaying.tsx` on home for **every user** (not host-gated, not player-gated).
-- [ ] **2.10 Web processing progress** — subscribe to `song:progress`, show step + pct in badge on queue item.
-- [ ] **2.11 Web host controls** — `HostControls.tsx` visible on home **iff** `user.isHost && playbackState.hostUserId === user.id`. Play/Pause/Skip/Prev/Seek.
-- [ ] **2.12 Web host heartbeat** — 10s interval POST `/api/users/heartbeat` while host tab open.
-- [ ] **2.13 Web player toggle** — `PlayerToggle.tsx`: "Play here" claims the player role (POST `/api/player/claim`), starts the local `<audio>`, begins 10s heartbeat + 1s `/api/playback/position` POSTs. "Stop playing here" releases. If another phone claims, this phone's audio pauses (react to `player:changed`).
-- [ ] **2.14 Lyric-sync channel** — active player emits `playback:tick` (1Hz) via Socket.IO; all clients use it to drive lyric highlight. Non-player phones don't run `<audio>` — they just track the tick.
-- [ ] **2.15 Auto-advance** — when player's `<audio>` `ended` fires AND the local user is also host: POST `/api/playback/skip`. If player ≠ host, the player emits `playback:ended` and server waits for host skip (or auto-advances after a 3s grace if no host).
-- [ ] **2.16 Skip-if-not-ready** — server: on skip, pick next QueueItem with `state=ready`. Items not yet ready stay in queue; they become playable once processing finishes.
-- [ ] **2.17 Commit.** Smoke test with three phones: one host, one player, one plain participant — all three see now-playing + queue; only host sees controls; only player emits audio.
+- [x] **2.1 Socket.IO server** (`api/src/sockets/index.ts`) — attached to fastify's HTTP server, cookie auth via handshake.
+- [x] **2.2 Postgres LISTEN bridge** (`sockets/broadcast.ts`) — dedicated pg client with exponential-backoff reconnect; LISTENs on all five channels.
+- [x] **2.3 API triggers** — mutation sites call `pg_notify` via `$executeRawUnsafe` (fire-and-forget).
+- [x] **2.4 Host service** (`host/hostService.ts`) — takeover + heartbeat with vitest coverage of stale / conflict / already-host paths.
+- [x] **2.5 Player service** (`player/playerService.ts`) — claim/release/heartbeat with `PLAYER_STALE_SECONDS` takeover.
+- [x] **2.6 Playback routes** (`routes/playback.ts`) — host-only middleware; `/api/playback/position` restricted to the current `playerUserId`.
+- [x] **2.7 Web: `lib/socket.ts`** — singleton client, auto-reconnect, typed events.
+- [x] **2.8 Web live queue** — initial fetch + refetch on `queue:updated` (signal pattern; see §6 note).
+- [x] **2.9 Web now-playing** — subscribes to `playback:state`; `NowPlaying.tsx` shown on home for every user.
+- [x] **2.10 Web processing progress** — `song:progress` → badge step + pct, live.
+- [x] **2.11 Web host controls** — `HostControls.tsx` gated by `user.isHost && playbackState.hostUserId === user.id`.
+- [x] **2.12 Web host heartbeat** — 10s POST `/api/users/heartbeat` while host tab is open.
+- [x] **2.13 Host audio player** — the original plan's "any phone can be the player" was collapsed to "host is the player". `PlayerToggle.tsx` renders a hidden `<audio>` only for the host, auto-claims the player role on mount, syncs with `PlaybackState.isPlaying`/`positionSeconds`/`currentQueueItemId`, and surfaces a one-tap "▶ Tap to start audio" fallback if the browser blocks the first `play()` (autoplay policy).
+- [x] **2.14 Lyric-sync channel** — `playback:tick` at 1Hz from the host → all clients; page merges tick into `playbackState.positionSeconds` so seek bar progresses and (in Phase 3) lyric highlight advances.
+- [x] **2.15 Auto-advance** — audio `ended` on host → `POST /api/playback/skip`. The `playback:ended` socket event + 3s server grace still works for the player ≠ host case but isn't hit in normal operation now.
+- [x] **2.16 Skip-if-not-ready** — server filters to `state=ready` on skip/auto-advance.
+- [x] **2.17 Smoke test** — `bench-phase2.md` Scenarios 1, 2, 6, 7, 9 verified manually. Scenarios 3/4/5/8 superseded by the host-is-player simplification.
+
+**Phase 2 done — key fixes and deviations from the original plan:**
+
+- **`queue:updated` event payload changed.** Plan said the event ships the full `QueueView`; implementation broadcasts `{ reason, ... }` and clients refetch `GET /api/queue`. Chose this because the PG NOTIFY channel is the wire format and we'd otherwise duplicate `queueView()` across four publish sites.
+- **New `GET /api/playback` route** added so clients can seed `PlaybackStateView` on page load (before any `playback:state` event fires). Without this, the host gate `playbackState.hostUserId === user.id` stays false on first render and host controls don't appear.
+- **`host:changed` / `player:changed` are bare signals.** Clients refetch `/api/playback` on receipt to pick up the new id/name; saves duplicating the view model at every publish site (same rationale as `queue:updated`).
+- **Socket.IO bypasses the Next.js rewrite.** Next.js `rewrites()` does not proxy WebSocket upgrades; the browser connects Socket.IO directly to the api's port. `NEXT_PUBLIC_WS_URL` override covers Dokploy/Traefik production routing. See §7 for details.
+- **`/api/health`, not `/health`.** The handler is registered under the `/api/*` prefix so it routes through the Next.js rewrite from the browser's public origin.
+- **1Hz position tick merged into `playbackState`.** `apps/web/app/page.tsx` subscribes to `playback:tick` and patches `positionSeconds` into `playbackState`, which drives the host seek-bar thumb and is the position source Phase 3 will feed into `LyricsView`.
+- **Host-is-player collapse.** See §1 note. Verification §11 steps 4/5/10 and bench Scenarios 3/4/5/8 no longer apply as written. `/api/player/*` endpoints remain but are effectively internal — no UI surfaces them to guests. Server-side they still accept any authenticated caller; hardening is deferred to Phase 4 if ever needed.
+- **Browser autoplay caveat.** First host `audio.play()` may be blocked until the tab has seen a user gesture. The "▶ Tap to start audio" fallback button appears only when the play() promise rejects; after one tap, subsequent skips / pause / resume work without further prompts.
 
 ### Phase 3 — Lyrics + library + re-queue
 

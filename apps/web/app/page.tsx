@@ -8,6 +8,7 @@ import type {
   User,
   PlaybackStateView,
   SongProgressEvent,
+  PlaybackTickEvent,
 } from "@karaoke/shared";
 import { api } from "@/lib/api";
 import { loadStoredUser } from "@/lib/user";
@@ -45,15 +46,26 @@ export default function HomePage() {
     }
   }, []);
 
+  const fetchPlaybackState = useCallback(async () => {
+    try {
+      const state = await api.get<PlaybackStateView>("/api/playback");
+      setPlaybackState(state);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   // Initial fetch + socket subscriptions
   useEffect(() => {
     if (!user) return;
 
-    // Fetch current state immediately so users see the queue before first event
+    // Fetch current state immediately so users see the queue + host/player state
+    // before the first socket event arrives.
     fetchQueue();
+    fetchPlaybackState();
 
-    function onQueueUpdated(data: QueueView) {
-      setQueue(data);
+    function onQueueUpdated() {
+      fetchQueue();
     }
 
     function onPlaybackState(data: PlaybackStateView) {
@@ -68,16 +80,34 @@ export default function HomePage() {
       });
     }
 
+    function onHostOrPlayerChanged() {
+      fetchPlaybackState();
+    }
+
+    // 1Hz tick from the active player — merge into playbackState so UI
+    // surfaces that read positionSeconds (seek bar, lyric highlight) advance.
+    function onPlaybackTick(data: PlaybackTickEvent) {
+      setPlaybackState((prev) =>
+        prev ? { ...prev, positionSeconds: data.positionSeconds } : prev,
+      );
+    }
+
     socket.on("queue:updated", onQueueUpdated);
     socket.on("playback:state", onPlaybackState);
+    socket.on("playback:tick", onPlaybackTick);
     socket.on("song:progress", onSongProgress);
+    socket.on("host:changed", onHostOrPlayerChanged);
+    socket.on("player:changed", onHostOrPlayerChanged);
 
     return () => {
       socket.off("queue:updated", onQueueUpdated);
       socket.off("playback:state", onPlaybackState);
+      socket.off("playback:tick", onPlaybackTick);
       socket.off("song:progress", onSongProgress);
+      socket.off("host:changed", onHostOrPlayerChanged);
+      socket.off("player:changed", onHostOrPlayerChanged);
     };
-  }, [user, socket, fetchQueue]);
+  }, [user, socket, fetchQueue, fetchPlaybackState]);
 
   const current = queue?.current ?? null;
   const currentAudioKey =
@@ -124,7 +154,7 @@ export default function HomePage() {
         <PlayerToggle
           currentSongId={currentAudioKey}
           playbackState={playbackState}
-          currentUserId={user.id}
+          isHost={user.isHost}
         />
       </section>
 
