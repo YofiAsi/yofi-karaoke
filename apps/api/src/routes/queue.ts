@@ -123,6 +123,13 @@ export async function registerQueueRoutes(app: FastifyInstance): Promise<void> {
         needsJob = !hasOpenJob;
       }
 
+      const activeItem = await prisma.queueItem.findFirst({
+        where: { songId: song.id, state: { in: [QueueState.queued, QueueState.processing, QueueState.ready] } },
+      });
+      if (activeItem) {
+        return reply.code(409).send({ error: "already_queued" });
+      }
+
       const initialState: QueueState = song.instrumentalObjectKey
         ? QueueState.ready
         : QueueState.processing;
