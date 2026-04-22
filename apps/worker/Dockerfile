@@ -24,14 +24,15 @@ RUN apt-get update && apt-get install -y \
   clinfo \
   && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://repositories.intel.com/graphics/intel-graphics.key \
+RUN curl -fsSL https://repositories.intel.com/gpu/intel-graphics.key \
   | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg && \
   echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] \
-  https://repositories.intel.com/graphics/ubuntu jammy arc" \
-  > /etc/apt/sources.list.d/intel-graphics.list && \
+  https://repositories.intel.com/gpu/ubuntu jammy unified" \
+  > /etc/apt/sources.list.d/intel-gpu.list && \
   apt-get update && apt-get install -y \
   intel-opencl-icd \
-  intel-level-zero-gpu \
+  libze-intel-gpu1 \
+  libze1 \
   && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
