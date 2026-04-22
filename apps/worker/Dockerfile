@@ -8,6 +8,7 @@ COPY apps/web/package.json apps/web/
 COPY packages/shared/package.json packages/shared/
 RUN pnpm install --frozen-lockfile
 COPY . .
+RUN pnpm --filter @karaoke/shared build
 RUN pnpm --filter worker build
 
 FROM ubuntu:22.04 AS runner

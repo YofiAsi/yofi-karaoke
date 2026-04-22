@@ -94,7 +94,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=karaoke
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - karaoke-pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U karaoke -d karaoke"]
       interval: 5s
@@ -109,9 +109,9 @@ services:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     volumes:
-      - miniodata:/data
+      - karaoke-miniodata:/data
     restart: unless-stopped
 
 volumes:
-  pgdata:
-  miniodata:
+  karaoke-pgdata:
+  karaoke-miniodata:
