@@ -2,164 +2,134 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import { getSocket } from "@/lib/socket";
-import type { PlaybackStateView, PlayerChangedEvent, PlaybackTickEvent } from "@karaoke/shared";
+import type { PlaybackStateView } from "@karaoke/shared";
 
 interface PlayerToggleProps {
   currentSongId: string | null;
   playbackState: PlaybackStateView | null;
-  currentUserId: string;
+  isHost: boolean;
 }
 
+/**
+ * HostAudioPlayer — in this app the host is also the player. This component
+ * renders the <audio> element on the host device only, keeps it in sync with
+ * PlaybackState (play/pause/seek/song switch), and requests a skip when the
+ * current song finishes.
+ *
+ * Browsers block audio.play() until the tab has seen a user gesture; if the
+ * initial play is blocked we surface a one-tap unblock button.
+ */
 export function PlayerToggle({
   currentSongId,
   playbackState,
-  currentUserId,
+  isHost,
 }: PlayerToggleProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const [isActive, setIsActive] = useState(false);
-  const [tickPosition, setTickPosition] = useState<number | null>(null);
-  const positionIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // keep a ref so callbacks always see latest value without re-subscribing
-  const isActiveRef = useRef(false);
-  // keep a ref so the ended handler always sees latest playbackState
-  const playbackStateRef = useRef(playbackState);
+  const [blocked, setBlocked] = useState(false);
 
-  function stopPlaying() {
-    audioRef.current?.pause();
-    if (positionIntervalRef.current) {
-      clearInterval(positionIntervalRef.current);
-      positionIntervalRef.current = null;
-    }
-    if (heartbeatIntervalRef.current) {
-      clearInterval(heartbeatIntervalRef.current);
-      heartbeatIntervalRef.current = null;
-    }
-    isActiveRef.current = false;
-    setIsActive(false);
-  }
-
-  // React to player:changed — stop playing if someone else claimed the role
+  // Claim the player role on mount + 10s heartbeat, release on unmount.
+  // The claim keeps PlaybackState.playerUserId in sync so server-side features
+  // (e.g. playback:tick routing, stale-takeover) work off a real user id.
   useEffect(() => {
-    const socket = getSocket();
-    function onPlayerChanged(data: PlayerChangedEvent) {
-      if (isActiveRef.current && data.playerUserId !== currentUserId) {
-        stopPlaying();
-      }
-    }
-    socket.on("player:changed", onPlayerChanged);
+    if (!isHost) return;
+    api.post("/api/player/claim").catch(console.error);
+    const hb = setInterval(() => {
+      api.post("/api/player/heartbeat").catch(console.error);
+    }, 10_000);
     return () => {
-      socket.off("player:changed", onPlayerChanged);
+      clearInterval(hb);
+      api.post("/api/player/release").catch(console.error);
     };
-  }, [currentUserId]);
+  }, [isHost]);
 
-  // Subscribe to playback:tick (for lyric sync, Phase 3)
+  // Emit 1Hz position while audio is actually playing (for lyric sync in Phase 3).
   useEffect(() => {
-    const socket = getSocket();
-    function onTick(data: PlaybackTickEvent) {
-      if (!isActiveRef.current) {
-        setTickPosition(data.positionSeconds);
-      }
+    if (!isHost) return;
+    const id = setInterval(() => {
+      const el = audioRef.current;
+      if (!el || el.paused) return;
+      api
+        .post("/api/playback/position", { positionSeconds: el.currentTime })
+        .catch(console.error);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isHost]);
+
+  // When the current song changes, load the new src. Play/pause is handled
+  // by the isPlaying effect below so we don't double-trigger playback.
+  useEffect(() => {
+    if (!isHost) return;
+    const el = audioRef.current;
+    if (!el || !currentSongId) return;
+    const nextSrc = `/api/audio/${currentSongId}`;
+    if (!el.src.endsWith(nextSrc)) {
+      el.src = nextSrc;
     }
-    socket.on("playback:tick", onTick);
-    return () => {
-      socket.off("playback:tick", onTick);
-    };
-  }, []);
+  }, [isHost, currentSongId]);
 
-  // Keep playbackStateRef in sync with the latest prop value
+  // Sync play/pause with PlaybackState.isPlaying.
   useEffect(() => {
-    playbackStateRef.current = playbackState;
-  }, [playbackState]);
-
-  // Pause/reset when song changes
-  useEffect(() => {
-    if (isActiveRef.current) {
-      stopPlaying();
+    if (!isHost) return;
+    const el = audioRef.current;
+    if (!el || !playbackState) return;
+    if (playbackState.isPlaying && el.paused) {
+      el.play()
+        .then(() => setBlocked(false))
+        .catch(() => setBlocked(true));
+    } else if (!playbackState.isPlaying && !el.paused) {
+      el.pause();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSongId]);
+  }, [isHost, playbackState?.isPlaying, currentSongId]);
 
-  // Handle audio ended — auto-advance or notify server
+  // Sync seek. 1.5s is wider than the 1Hz position POST round-trip so we
+  // never fight our own position reports.
   useEffect(() => {
+    if (!isHost) return;
+    const el = audioRef.current;
+    if (!el || !playbackState) return;
+    const drift = Math.abs(el.currentTime - playbackState.positionSeconds);
+    if (drift > 1.5) {
+      el.currentTime = playbackState.positionSeconds;
+    }
+  }, [isHost, playbackState?.positionSeconds]);
+
+  // Audio ended → advance. Host is the player, so we can skip directly.
+  useEffect(() => {
+    if (!isHost) return;
     const el = audioRef.current;
     if (!el) return;
-
-    async function handleAudioEnded() {
-      if (!isActiveRef.current) return;
-      const socket = getSocket();
-      const state = playbackStateRef.current;
-      if (state?.hostUserId === currentUserId) {
-        // This device is both player and host — skip directly via API
-        await api.post("/api/playback/skip").catch(console.error);
-      } else {
-        // Player only — notify server; it will auto-advance after a 3s grace period
-        socket.emit("playback:ended");
-      }
-      stopPlaying();
+    async function onEnded() {
+      await api.post("/api/playback/skip").catch(console.error);
     }
+    el.addEventListener("ended", onEnded);
+    return () => el.removeEventListener("ended", onEnded);
+  }, [isHost]);
 
-    el.addEventListener("ended", handleAudioEnded);
-    return () => {
-      el.removeEventListener("ended", handleAudioEnded);
-    };
-    // currentUserId is stable; stopPlaying/api/getSocket are module-level — no dep needed
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUserId]);
-
-  // Cleanup intervals on unmount
-  useEffect(() => {
-    return () => {
-      if (positionIntervalRef.current) clearInterval(positionIntervalRef.current);
-      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
-    };
-  }, []);
-
-  async function handlePlayHere() {
-    if (!currentSongId) return;
+  async function handleUnblock() {
+    const el = audioRef.current;
+    if (!el) return;
     try {
-      await api.post("/api/player/claim");
-      const el = audioRef.current;
-      if (!el) return;
-      el.src = `/api/audio/${currentSongId}`;
       await el.play();
-      isActiveRef.current = true;
-      setIsActive(true);
-      positionIntervalRef.current = setInterval(() => {
-        api
-          .post("/api/playback/position", { positionSeconds: el.currentTime })
-          .catch(console.error);
-      }, 1000);
-      heartbeatIntervalRef.current = setInterval(() => {
-        api.post("/api/player/heartbeat").catch(console.error);
-      }, 10_000);
+      setBlocked(false);
     } catch (err) {
-      console.error("Failed to claim player role", err);
+      console.error("audio unblock failed", err);
     }
   }
 
-  async function handleStopHere() {
-    await api.post("/api/player/release").catch(console.error);
-    stopPlaying();
-  }
-
-  // Expose tickPosition for Phase 3 — suppress unused warning until then
-  void tickPosition;
-
+  if (!isHost) return null;
   if (!currentSongId) return null;
 
   return (
     <div className="mt-4">
       <audio ref={audioRef} preload="metadata" playsInline />
-      <button
-        onClick={isActive ? handleStopHere : handlePlayHere}
-        className={`w-full rounded-xl py-4 font-semibold ${
-          isActive ? "bg-neutral-800 text-white" : "bg-white text-black"
-        }`}
-      >
-        {isActive ? "Stop playing here" : "Play here"}
-      </button>
+      {blocked && (
+        <button
+          onClick={handleUnblock}
+          className="w-full rounded-xl bg-white text-black py-4 font-semibold"
+        >
+          ▶ Tap to start audio
+        </button>
+      )}
     </div>
   );
 }

@@ -32,12 +32,30 @@ export type AppSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 let _socket: AppSocket | null = null;
 
 /**
+ * Resolve the Socket.IO server URL.
+ *
+ * Next.js `rewrites()` cannot proxy WebSocket upgrades, so we can't route
+ * Socket.IO through the web origin in local/docker setups. We connect the
+ * browser directly to the api container's exposed port instead.
+ *
+ * Override via `NEXT_PUBLIC_WS_URL` for deployments where a real reverse
+ * proxy (Dokploy/Traefik, nginx, etc.) terminates WSS on the public origin.
+ */
+function resolveSocketUrl(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  const override = process.env.NEXT_PUBLIC_WS_URL;
+  if (override && /^https?:\/\//.test(override)) return override;
+  const { protocol, hostname } = window.location;
+  return `${protocol}//${hostname}:4000`;
+}
+
+/**
  * Returns the singleton socket instance, creating it lazily on first call.
  * autoConnect is false so the caller (useSocket) initiates the connection.
  */
 export function getSocket(): AppSocket {
   if (!_socket) {
-    _socket = io({
+    _socket = io(resolveSocketUrl(), {
       path: "/socket.io",
       autoConnect: false,
       reconnection: true,

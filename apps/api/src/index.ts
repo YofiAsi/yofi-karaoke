@@ -35,7 +35,7 @@ async function build() {
 
   app.addHook("preHandler", attachUserHook);
 
-  app.get("/health", async () => ({ ok: true }));
+  app.get("/api/health", async () => ({ ok: true }));
 
   await registerUserRoutes(app);
   await registerSearchRoutes(app);
