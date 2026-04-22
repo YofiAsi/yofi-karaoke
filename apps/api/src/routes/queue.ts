@@ -12,7 +12,7 @@ import { requireUser } from "../auth/userCookie.js";
 import { ytdlpInfo } from "../ytdlp.js";
 import { enqueueProcessSong } from "../jobs/enqueueProcessSong.js";
 
-async function notify(channel: string, payload: object): Promise<void> {
+export async function notify(channel: string, payload: object): Promise<void> {
   await prisma.$executeRawUnsafe(
     `SELECT pg_notify($1, $2)`,
     channel,
@@ -20,7 +20,7 @@ async function notify(channel: string, payload: object): Promise<void> {
   );
 }
 
-async function nextPosition(): Promise<number> {
+export async function nextPosition(): Promise<number> {
   const agg = await prisma.queueItem.aggregate({ _max: { position: true } });
   return (agg._max.position ?? 0) + 1;
 }

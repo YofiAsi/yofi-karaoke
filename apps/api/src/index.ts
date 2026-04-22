@@ -12,6 +12,7 @@ import { attachUserHook } from "./auth/userCookie.js";
 import { registerUserRoutes } from "./routes/users.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerQueueRoutes } from "./routes/queue.js";
+import { registerLibraryRoutes } from "./routes/library.js";
 import { registerAudioRoutes } from "./routes/audio.js";
 import { registerPlaybackRoutes } from "./routes/playback.js";
 import { setupSocketIO } from "./sockets/index.js";
@@ -40,6 +41,7 @@ async function build() {
   await registerUserRoutes(app);
   await registerSearchRoutes(app);
   await registerQueueRoutes(app);
+  await registerLibraryRoutes(app);
   await registerAudioRoutes(app);
   await registerPlaybackRoutes(app);
 
