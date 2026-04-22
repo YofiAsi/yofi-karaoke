@@ -16,7 +16,23 @@ const RequeueParamsSchema = z.object({
   songId: z.string().uuid(),
 });
 
+const SongParamsSchema = z.object({
+  songId: z.string().uuid(),
+});
+
 export async function registerLibraryRoutes(app: FastifyInstance): Promise<void> {
+  app.get("/api/songs/:songId/lyrics", {
+    schema: { params: SongParamsSchema },
+    handler: async (req, reply) => {
+      const { songId } = req.params as z.infer<typeof SongParamsSchema>;
+      const song = await prisma.song.findUnique({ where: { id: songId } });
+      if (!song) {
+        return reply.code(404).send({ error: "song_not_found" });
+      }
+      return reply.send({ lrc: song.lyricsLrc ?? null });
+    },
+  });
+
   // 3.1 Library search — paginated, only songs with instrumentalObjectKey
   app.get("/api/library", {
     schema: {

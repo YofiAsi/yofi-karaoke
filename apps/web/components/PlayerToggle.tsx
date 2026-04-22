@@ -8,6 +8,7 @@ interface PlayerToggleProps {
   currentSongId: string | null;
   playbackState: PlaybackStateView | null;
   isHost: boolean;
+  onTick?: (positionSeconds: number) => void;
 }
 
 /**
@@ -23,6 +24,7 @@ export function PlayerToggle({
   currentSongId,
   playbackState,
   isHost,
+  onTick,
 }: PlayerToggleProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [blocked, setBlocked] = useState(false);
@@ -92,6 +94,15 @@ export function PlayerToggle({
       el.currentTime = playbackState.positionSeconds;
     }
   }, [isHost, playbackState?.positionSeconds]);
+
+  useEffect(() => {
+    if (!isHost || !onTick) return;
+    const el = audioRef.current;
+    if (!el) return;
+    const handler = () => onTick(el.currentTime);
+    el.addEventListener("timeupdate", handler);
+    return () => el.removeEventListener("timeupdate", handler);
+  }, [isHost, onTick]);
 
   // Audio ended → advance. Host is the player, so we can skip directly.
   useEffect(() => {
