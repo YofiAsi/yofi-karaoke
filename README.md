@@ -43,10 +43,38 @@ acceptance test that proves vocal separation works on the Arc GPU.
 
 ## Deployment (Dokploy)
 
-1. Drop `docker-compose.yml` into Dokploy.
-2. Configure your domain in the Dokploy UI — do **not** add Traefik labels to the compose file; Dokploy injects them at deploy time.
-3. Set environment variables in the Dokploy UI (from `.env.example`).
-4. Deploy. Dokploy's Traefik layer routes the public domain to the `web` service on port 3000.
+`docker-compose.yml` is the **production** file (Intel Arc / OpenVINO, locked-down networking — no host port bindings except what Dokploy's Traefik picks up automatically). `docker-compose.nvidia.yml` is for **local dev** on WSL2 + NVIDIA and keeps host ports bound for convenience.
+
+### Routing shape: single domain, path routing
+
+Everything is served under one domain (e.g. `karaoke.example.com`). In the Dokploy UI configure three path routes on the compose app:
+
+| Path          | Target        | Notes                                                                 |
+| ------------- | ------------- | --------------------------------------------------------------------- |
+| `/socket.io/*` | `api:4000`   | Must be same-origin for cookies. Dokploy's Traefik upgrades to WSS.   |
+| `/api/*`      | `api:4000`   | Bypasses the Next.js rewrite at the edge (one hop instead of two).    |
+| `/*`          | `web:3000`   | Everything else goes to Next.js.                                      |
+
+### Steps
+
+1. Clone the repo into Dokploy (Git source) and point it at `docker-compose.yml`.
+2. Set environment variables in the Dokploy UI (copy from `.env.example`):
+   - `HOST_USER_NAME`, `SESSION_SECRET`
+   - `POSTGRES_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `MINIO_BUCKET`
+   - `NEXT_PUBLIC_WS_URL=https://<your-domain>` — baked into the web image at build time; Socket.IO connects same-origin over WSS.
+   - `PUBLIC_ORIGIN=https://<your-domain>` — restricts api CORS + Socket.IO origin in prod.
+   - `RENDER_GID`/`VIDEO_GID` if the Dokploy host doesn't use the defaults (109/44). Run `scripts/detect-gpu-gids.sh` on the host.
+3. Configure the three path routes above in the Dokploy UI.
+4. Deploy. Dokploy injects Traefik labels and the `dokploy-network` at deploy time — do **not** add either to the compose file.
+
+### What's green when
+
+Dokploy shows the stack as healthy once `web`, `api`, `postgres`, and `minio` report `healthy`. The `worker` stays in `running` state — it has no HTTP surface and its liveness is covered by `graphile-worker`'s Postgres heartbeat plus `restart: unless-stopped`.
+
+### Backends
+
+- `docker-compose.yml` — Intel Arc A750 via ONNX + OpenVINO (production).
+- `docker-compose.nvidia.yml` — NVIDIA CUDA EP (dev / alt production). Pick one per Dokploy app.
 
 ## Architecture
 

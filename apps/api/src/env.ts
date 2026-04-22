@@ -21,7 +21,18 @@ const EnvSchema = z.object({
   YTDLP_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   COOKIE_NAME: z.string().default("karaoke_uid"),
   CORS_ORIGIN: z.string().default("*"),
+  PUBLIC_ORIGIN: z.string().default(""),
 });
 
-export const env = EnvSchema.parse(process.env);
+const parsed = EnvSchema.parse(process.env);
+
+export const env = {
+  ...parsed,
+  /**
+   * Resolved CORS / Socket.IO origin.
+   * PUBLIC_ORIGIN (Dokploy prod) wins when set; otherwise fall back to the
+   * comma-separated CORS_ORIGIN (or "*" which becomes `true` for reflection).
+   */
+  CORS_ORIGIN: parsed.PUBLIC_ORIGIN.trim() !== "" ? parsed.PUBLIC_ORIGIN : parsed.CORS_ORIGIN,
+};
 export type Env = typeof env;

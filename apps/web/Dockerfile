@@ -3,6 +3,8 @@ RUN corepack enable
 
 FROM base AS builder
 WORKDIR /app
+ARG NEXT_PUBLIC_WS_URL=""
+ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 COPY . .
 RUN pnpm install
 RUN pnpm --filter @karaoke/shared build

@@ -1,0 +1,11 @@
+**/node_modules
+**/.next
+**/dist
+**/.turbo
+.git
+.env
+.env.*
+!.env.example
+*.log
+apps/worker/python/__pycache__
+models/
