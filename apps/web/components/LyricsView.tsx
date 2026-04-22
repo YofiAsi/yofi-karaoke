@@ -7,9 +7,15 @@ interface LyricsViewProps {
   lines: LrcLine[];
   positionSeconds: number;
   plainText?: string;
+  expandToFill?: boolean;
 }
 
-export function LyricsView({ lines, positionSeconds, plainText }: LyricsViewProps) {
+export function LyricsView({
+  lines,
+  positionSeconds,
+  plainText,
+  expandToFill,
+}: LyricsViewProps) {
   const activeRef = useRef<HTMLParagraphElement>(null);
 
   const adjustedPosition = positionSeconds + 0.3;
@@ -24,10 +30,14 @@ export function LyricsView({ lines, positionSeconds, plainText }: LyricsViewProp
     activeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [activeIdx]);
 
+  const scrollAreaClass = expandToFill
+    ? "flex-1 min-h-0 overflow-y-auto px-1 py-4 space-y-4 scroll-smooth"
+    : "overflow-y-auto max-h-72 px-1 py-4 space-y-4 scroll-smooth";
+
   if (lines.length === 0 && plainText) {
     const plainLines = plainText.split("\n").filter((l) => l.trim().length > 0);
     return (
-      <div className="overflow-y-auto max-h-72 px-1 py-4 space-y-4 scroll-smooth">
+      <div className={scrollAreaClass}>
         {plainLines.map((line, i) => (
           <p key={i} className="text-2xl font-semibold leading-snug text-neutral-600">
             {line}
@@ -38,15 +48,23 @@ export function LyricsView({ lines, positionSeconds, plainText }: LyricsViewProp
   }
 
   if (lines.length === 0) {
-    return (
+    const message = (
       <p dir="rtl" className="text-neutral-500 text-center py-8 text-lg">
         לול לא מצאתי מילים
       </p>
     );
+    if (expandToFill) {
+      return (
+        <div className="flex-1 min-h-0 flex flex-col items-center justify-center">
+          {message}
+        </div>
+      );
+    }
+    return message;
   }
 
   return (
-    <div className="overflow-y-auto max-h-72 px-1 py-4 space-y-4 scroll-smooth">
+    <div className={scrollAreaClass}>
       {lines.map((line, i) => (
         <p
           key={i}

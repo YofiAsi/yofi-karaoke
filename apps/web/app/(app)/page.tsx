@@ -20,8 +20,8 @@ export default function HomePage() {
   const upcomingCount = upcoming.length;
 
   return (
-    <main className="min-h-screen flex flex-col gap-6 p-5 pb-28">
-      <header className="flex items-center justify-between">
+    <main className="min-h-dvh flex flex-col">
+      <header className="shrink-0 flex items-center justify-between px-5 pt-5 pb-3">
         <div>
           <p className="text-xs uppercase tracking-widest text-neutral-500">Karaoke</p>
           <h1 className="text-xl font-semibold">Hi, {user.name}</h1>
@@ -50,19 +50,24 @@ export default function HomePage() {
         </div>
       </header>
 
-      <section className="rounded-2xl bg-neutral-900 border border-neutral-800 p-5">
-        <p className="text-xs uppercase tracking-widest text-neutral-500">Now playing</p>
-        <NowPlaying current={current} playbackState={playbackState} />
-        <HostControls
-          user={user}
-          playbackState={playbackState}
-          currentSongDuration={current?.song.durationSeconds}
-        />
+      <section className="flex-1 flex flex-col min-h-0 w-full bg-neutral-900 border-t border-neutral-800 px-5 pb-28 pt-4">
+        <p className="text-xs uppercase tracking-widest text-neutral-500 shrink-0">
+          Now playing
+        </p>
+        <div className="shrink-0">
+          <NowPlaying current={current} playbackState={playbackState} />
+          <HostControls
+            user={user}
+            playbackState={playbackState}
+            currentSongDuration={current?.song.durationSeconds}
+          />
+        </div>
         {current && (
           <LyricsView
             lines={lrcLines}
             positionSeconds={audioPosition ?? playbackState?.positionSeconds ?? 0}
             plainText={plainLyrics ?? undefined}
+            expandToFill
           />
         )}
       </section>
