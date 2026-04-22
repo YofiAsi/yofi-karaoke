@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { QueueState } from "@prisma/client";
-import { PgNotifyChannels } from "@karaoke/shared";
+import { PgNotifyChannels, SongSchema } from "@karaoke/shared";
 import { prisma } from "../db.js";
 import { requireUser } from "../auth/userCookie.js";
 import { nextPosition, notify } from "./queue.js";
@@ -19,7 +19,12 @@ const RequeueParamsSchema = z.object({
 export async function registerLibraryRoutes(app: FastifyInstance): Promise<void> {
   // 3.1 Library search — paginated, only songs with instrumentalObjectKey
   app.get("/api/library", {
-    schema: { querystring: LibraryQuerySchema },
+    schema: {
+      querystring: LibraryQuerySchema,
+      response: {
+        200: z.object({ items: z.array(SongSchema), total: z.number().int() }),
+      },
+    },
     handler: async (req, reply) => {
       const { q, limit, offset } = req.query as z.infer<typeof LibraryQuerySchema>;
 
