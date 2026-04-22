@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { SearchResultItem } from "@karaoke/shared";
 import { api } from "@/lib/api";
-import { loadStoredUser } from "@/lib/user";
+import { useAppShell } from "../AppShellContext";
+import { useRouter } from "next/navigation";
 
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -15,16 +15,13 @@ function formatDuration(seconds: number): string {
 
 export default function SearchPage() {
   const router = useRouter();
+  const { user } = useAppShell();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResultItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (!loadStoredUser()) router.replace("/name");
-  }, [router]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -64,6 +61,8 @@ export default function SearchPage() {
       setSubmitting(null);
     }
   }
+
+  if (!user) return null;
 
   return (
     <main className="min-h-screen p-5 flex flex-col gap-5">

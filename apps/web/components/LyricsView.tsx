@@ -39,8 +39,8 @@ export function LyricsView({ lines, positionSeconds, plainText }: LyricsViewProp
 
   if (lines.length === 0) {
     return (
-      <p className="text-neutral-500 text-center py-8 text-lg">
-        Instrumental — no lyrics available.
+      <p dir="rtl" className="text-neutral-500 text-center py-8 text-lg">
+        לול לא מצאתי מילים
       </p>
     );
   }

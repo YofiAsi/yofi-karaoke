@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { Song } from "@karaoke/shared";
 import { api, ApiError } from "@/lib/api";
-import { loadStoredUser } from "@/lib/user";
+import { useAppShell } from "../AppShellContext";
 
 const PAGE_SIZE = 20;
 
@@ -17,6 +17,7 @@ function formatDuration(seconds: number): string {
 
 export default function LibraryPage() {
   const router = useRouter();
+  const { user } = useAppShell();
   const [query, setQuery] = useState("");
   const [songs, setSongs] = useState<Song[]>([]);
   const [total, setTotal] = useState(0);
@@ -29,10 +30,11 @@ export default function LibraryPage() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!loadStoredUser()) router.replace("/name");
-  }, [router]);
+    if (user && !user.isHost) router.replace("/");
+  }, [user, router]);
 
   useEffect(() => {
+    if (!user?.isHost) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     setOffset(0);
     setLoading(true);
@@ -53,7 +55,7 @@ export default function LibraryPage() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query]);
+  }, [query, user]);
 
   async function loadMore() {
     const nextOffset = offset + PAGE_SIZE;
@@ -90,6 +92,9 @@ export default function LibraryPage() {
       setSubmitting(null);
     }
   }
+
+  if (!user) return null;
+  if (!user.isHost) return null;
 
   const hasMore = songs.length < total;
 
