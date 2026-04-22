@@ -30,6 +30,7 @@ export default function HomePage() {
     () => new Map()
   );
   const [lrcLines, setLrcLines] = useState<LrcLine[]>([]);
+  const [plainLyrics, setPlainLyrics] = useState<string | null>(null);
   const [audioPosition, setAudioPosition] = useState<number | null>(null);
 
   useEffect(() => {
@@ -118,13 +119,20 @@ export default function HomePage() {
   useEffect(() => {
     if (!currentSong?.id || !currentSong.hasLyrics) {
       setLrcLines([]);
+      setPlainLyrics(null);
       setAudioPosition(null);
       return;
     }
     api
-      .get<{ lrc: string | null }>(`/api/songs/${currentSong.id}/lyrics`)
-      .then(({ lrc }) => setLrcLines(parseLrc(lrc)))
-      .catch(() => setLrcLines([]));
+      .get<{ lrc: string | null; plain: string | null }>(`/api/songs/${currentSong.id}/lyrics`)
+      .then(({ lrc, plain }) => {
+        setLrcLines(parseLrc(lrc));
+        setPlainLyrics(lrc ? null : plain);
+      })
+      .catch(() => {
+        setLrcLines([]);
+        setPlainLyrics(null);
+      });
   }, [currentSong?.id, currentSong?.hasLyrics]);
 
   const current = queue?.current ?? null;
@@ -187,6 +195,7 @@ export default function HomePage() {
           <LyricsView
             lines={lrcLines}
             positionSeconds={audioPosition ?? playbackState?.positionSeconds ?? 0}
+            plainText={plainLyrics ?? undefined}
           />
         )}
       </section>

@@ -29,7 +29,7 @@ export async function registerLibraryRoutes(app: FastifyInstance): Promise<void>
       if (!song) {
         return reply.code(404).send({ error: "song_not_found" });
       }
-      return reply.send({ lrc: song.lyricsLrc ?? null });
+      return reply.send({ lrc: song.lyricsLrc ?? null, plain: song.lyricsPlain ?? null });
     },
   });
 
@@ -75,7 +75,7 @@ export async function registerLibraryRoutes(app: FastifyInstance): Promise<void>
         durationSeconds: s.durationSeconds,
         thumbnailUrl: s.thumbnailUrl,
         hasInstrumental: true,
-        hasLyrics: !!s.lyricsLrc,
+        hasLyrics: !!(s.lyricsLrc || s.lyricsPlain),
       }));
 
       return reply.send({ items, total });

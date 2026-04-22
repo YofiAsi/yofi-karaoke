@@ -29,6 +29,7 @@ model Song {
   instrumentalObjectKey String?
   originalObjectKey     String?
   lyricsLrc             String?         @db.Text
+  lyricsPlain           String?         @db.Text
   lyricsSource          String?
   createdAt             DateTime        @default(now())
   queueItems            QueueItem[]

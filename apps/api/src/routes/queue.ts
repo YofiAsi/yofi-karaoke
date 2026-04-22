@@ -67,7 +67,7 @@ async function queueView(): Promise<QueueView> {
         durationSeconds: i.song.durationSeconds,
         thumbnailUrl: i.song.thumbnailUrl,
         hasInstrumental: !!i.song.instrumentalObjectKey,
-        hasLyrics: !!i.song.lyricsLrc,
+        hasLyrics: !!(i.song.lyricsLrc || i.song.lyricsPlain),
       },
       requestedByUserId: i.requestedByUserId,
       requestedByUserName: i.requestedByUser.name,
