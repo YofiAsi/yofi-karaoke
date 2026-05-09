@@ -1,0 +1,5 @@
+:8080 {
+	reverse_proxy /socket.io/* api:4000
+	reverse_proxy /api/* api:4000
+	reverse_proxy web:3000
+}
