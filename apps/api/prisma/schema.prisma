@@ -27,6 +27,7 @@ model Song {
   durationSeconds       Int
   thumbnailUrl          String
   instrumentalObjectKey String?
+  vocalsObjectKey       String?
   originalObjectKey     String?
   lyricsLrc             String?         @db.Text
   lyricsPlain           String?         @db.Text
@@ -94,6 +95,7 @@ model PlaybackState {
   currentQueueItemId    String?   @db.Uuid
   positionSeconds       Float     @default(0)
   isPlaying             Boolean   @default(false)
+  vocalsGain            Float     @default(0)
   hostUserId            String?   @db.Uuid
   hostLastHeartbeatAt   DateTime?
   playerUserId          String?   @db.Uuid
