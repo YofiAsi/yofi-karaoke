@@ -38,6 +38,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const [plainLyrics, setPlainLyrics] = useState<string | null>(null);
   const [audioPosition, setAudioPosition] = useState<number | null>(null);
   const [lyricsVersion, setLyricsVersion] = useState(0);
+  const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
 
   useEffect(() => {
     if (!user) {
@@ -112,6 +113,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     if (!currentSong?.id || !currentSong.hasLyrics) {
       setLrcLines([]);
       setPlainLyrics(null);
+      setLyricsOffsetMs(0);
       return;
     }
     api
@@ -120,6 +122,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         const { lines, plain } = toLyricsState(res);
         setLrcLines(lines);
         setPlainLyrics(plain);
+        setLyricsOffsetMs(res.offsetMs ?? 0);
       })
       .catch(() => {
         setLrcLines([]);
@@ -141,6 +144,8 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         progress,
         lrcLines,
         plainLyrics,
+        lyricsOffsetMs,
+        setLyricsOffsetMs,
         audioPosition,
         setAudioPosition,
         refetchQueue: fetchQueue,

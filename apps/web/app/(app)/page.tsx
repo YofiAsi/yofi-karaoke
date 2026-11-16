@@ -16,6 +16,8 @@ export default function HomePage() {
     progress,
     lrcLines,
     plainLyrics,
+    lyricsOffsetMs,
+    setLyricsOffsetMs,
     audioPosition,
     refetchQueue,
   } = useAppShell();
@@ -66,6 +68,9 @@ export default function HomePage() {
             user={user}
             playbackState={playbackState}
             currentSongDuration={current?.song.durationSeconds}
+            currentSongId={current?.song.id}
+            lyricsOffsetMs={lyricsOffsetMs}
+            onLyricsOffsetChange={setLyricsOffsetMs}
           />
         </div>
         {current && (
@@ -73,6 +78,7 @@ export default function HomePage() {
             lines={lrcLines}
             positionSeconds={audioPosition ?? playbackState?.positionSeconds ?? 0}
             plainText={plainLyrics ?? undefined}
+            offsetMs={lyricsOffsetMs}
             expandToFill
           />
         )}
