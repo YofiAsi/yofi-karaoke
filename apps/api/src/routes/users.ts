@@ -29,7 +29,7 @@ export async function registerUserRoutes(app: FastifyInstance): Promise<void> {
             .code(409)
             .send({ error: "host_name_taken" });
         }
-        setUserCookie(reply, outcome.userId);
+        setUserCookie(req, reply, outcome.userId);
         if (outcome.kind === "created" || outcome.kind === "taken_over") {
           notifyHostChanged(outcome.userId, outcome.userName).catch((err) =>
             req.log.error({ err }, "notifyHostChanged failed")
@@ -44,7 +44,7 @@ export async function registerUserRoutes(app: FastifyInstance): Promise<void> {
 
       const existing = await prisma.user.findUnique({ where: { name } });
       if (existing) {
-        setUserCookie(reply, existing.id);
+        setUserCookie(req, reply, existing.id);
         await prisma.user.update({
           where: { id: existing.id },
           data: { lastSeenAt: new Date() },
@@ -59,7 +59,7 @@ export async function registerUserRoutes(app: FastifyInstance): Promise<void> {
       const created = await prisma.user.create({
         data: { name, isHost: false, lastSeenAt: new Date() },
       });
-      setUserCookie(reply, created.id);
+      setUserCookie(req, reply, created.id);
       return reply.code(201).send({
         id: created.id,
         name: created.name,

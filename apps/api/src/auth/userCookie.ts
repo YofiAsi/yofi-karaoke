@@ -1,6 +1,9 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { prisma } from "../db.js";
 import { env } from "../env.js";
+import { unsignUserId } from "./signedUserId.js";
+
+const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 
 export interface AuthUser {
   id: string;
@@ -15,20 +18,25 @@ declare module "fastify" {
 }
 
 export async function loadUserFromCookie(req: FastifyRequest): Promise<AuthUser | null> {
-  const uid = req.cookies?.[env.COOKIE_NAME];
+  const uid = unsignUserId(req.cookies?.[env.COOKIE_NAME], env.SESSION_SECRET);
   if (!uid) return null;
   const user = await prisma.user.findUnique({ where: { id: uid } });
   if (!user) return null;
   return { id: user.id, name: user.name, isHost: user.isHost };
 }
 
-export function setUserCookie(reply: FastifyReply, userId: string): void {
+function shouldUseSecureCookie(req: FastifyRequest): boolean {
+  return req.protocol === "https" || env.NODE_ENV === "production";
+}
+
+export function setUserCookie(req: FastifyRequest, reply: FastifyReply, userId: string): void {
   reply.setCookie(env.COOKIE_NAME, userId, {
     path: "/",
-    httpOnly: false,
+    httpOnly: true,
     sameSite: "lax",
-    secure: false,
-    maxAge: 60 * 60 * 24 * 365,
+    secure: shouldUseSecureCookie(req),
+    signed: true,
+    maxAge: ONE_YEAR_SECONDS,
   });
 }
 
