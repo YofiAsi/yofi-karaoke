@@ -12,7 +12,7 @@ vi.mock("./romanizer.js", async (importOriginal) => ({
   runRomanizer: m.run,
 }));
 
-import { isJapanese, romanizeLyrics, splitLrcLine } from "./romaji.js";
+import { isJapanese, kanaShare, MIN_KANA_SHARE, needsRomaji, romanizeLyrics, splitLrcLine } from "./romaji.js";
 import { parseRomanizerOutput } from "./romanizer.js";
 
 const FAKE_ROMAJI: Record<string, string> = { "夢をみた": "yume o mita", "空へとぶ": "sora e tobu", "ゆめ": "yume" };
@@ -39,10 +39,19 @@ describe("isJapanese", () => {
   });
 
   it("leaves Chinese, Hebrew and Latin text alone", () => {
-    expect(isJapanese("月亮代表我的心")).toBe(false);
+    expect(isJapanese("我们一起走吧")).toBe(false);
     expect(isJapanese("שיר על הים")).toBe(false);
     expect(isJapanese("yume o mita")).toBe(false);
     expect(isJapanese(null)).toBe(false);
+  });
+
+  it("needs a minimum share of kana among kana and Han characters", () => {
+    const chinese = "今天天气很好我们一起走吧\n城市の夜晚灯火辉煌";
+    const kanjiHeavyJapanese = "永遠の愛を誓う\n運命の糸\n夢幻の世界\n天空に響く鐘";
+    expect(kanaShare(chinese)).toBeLessThan(MIN_KANA_SHARE);
+    expect(isJapanese(chinese)).toBe(false);
+    expect(kanaShare(kanjiHeavyJapanese)).toBeGreaterThanOrEqual(MIN_KANA_SHARE);
+    expect(isJapanese(kanjiHeavyJapanese)).toBe(true);
   });
 });
 
@@ -74,7 +83,9 @@ describe("romanizeLyrics", () => {
   });
 
   it.each([
-    ["Chinese", "[00:01.00]月亮代表我的心"],
+    ["Chinese", "[00:01.00]我们一起走吧"],
+    ["Chinese with one の", "[00:01.00]今天天气很好我们一起走吧\n[00:04.00]城市の夜晚灯火辉煌"],
+    ["romaji under a Japanese title tag", "[ti:夢のうた]\n[ar:うたびと]\n[00:01.00]yume o mita"],
     ["Hebrew", "[00:01.00]שיר על הים"],
     ["English", "[00:01.00]Dancing in the moonlight"],
     ["romaji", "[00:01.00]yume o mita"],
@@ -82,6 +93,11 @@ describe("romanizeLyrics", () => {
     const input = lyrics(synced, null);
     expect(await romanizeLyrics(input, log)).toBe(input);
     expect(m.run).not.toHaveBeenCalled();
+  });
+
+  it("ignores LRC tag lines when deciding whether a song is Japanese", () => {
+    expect(needsRomaji(lyrics("[ti:夢のうた]\n[00:01.00]Dancing in the moonlight", null))).toBe(false);
+    expect(needsRomaji(lyrics("[ti:Song]\n[00:01.00]夢をみた", null))).toBe(true);
   });
 
   it("does nothing when LYRICS_ROMAJI_ENABLED is false", async () => {

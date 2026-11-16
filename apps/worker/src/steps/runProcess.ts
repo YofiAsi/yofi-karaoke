@@ -48,7 +48,7 @@ export function runProcess(cmd: string, args: string[], opts: RunOptions): Promi
       clearTimeout(killTimer);
       reject(err);
     });
-    child.on("exit", (code) => {
+    child.on("close", (code) => {
       clearTimeout(killTimer);
       if (code === 0) resolve({ stdout, stderr });
       else reject(new Error(`${label} exited with code ${code}\nstdout: ${stdout}\nstderr: ${stderr}`));
