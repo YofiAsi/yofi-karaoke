@@ -251,8 +251,17 @@ describe("fetchLyrics", () => {
 });
 
 describe("LRCLIB pacing", () => {
-  it("keeps the minimum interval across lookups that run at the same time", async () => {
-    const interval = 20;
+  const songs = ["Adele - Hello", "Queen - Bohemian Rhapsody", "Drake - Hotline Bling"].map((title) => ({
+    title,
+    artist: title.split(" - ")[0],
+    durationSeconds: 200,
+  }));
+
+  async function lookUpTogether(clockStart: number, interval: number, deadlineMs?: number): Promise<number[]> {
+    vi.resetModules();
+    const fresh = await import("./lyrics.js");
+    vi.useFakeTimers();
+    vi.setSystemTime(clockStart);
     const sentAt: number[] = [];
     stubFetch((url) => {
       if (url.hostname === "lrclib.test") sentAt.push(Date.now());
@@ -261,18 +270,27 @@ describe("LRCLIB pacing", () => {
     const mutableEnv = env as { LRCLIB_MIN_INTERVAL_MS: number };
     mutableEnv.LRCLIB_MIN_INTERVAL_MS = interval;
     try {
-      const songs = ["Adele - Hello", "Queen - Bohemian Rhapsody", "Drake - Hotline Bling"].map((title) => ({
-        title,
-        artist: title.split(" - ")[0],
-        durationSeconds: 200,
-      }));
-      await Promise.all(songs.map((song) => fetchLyrics(song, silent)));
+      const done = Promise.all(songs.map((song) => fresh.fetchLyrics(song, silent, deadlineMs)));
+      await vi.runAllTimersAsync();
+      await done;
     } finally {
       mutableEnv.LRCLIB_MIN_INTERVAL_MS = 0;
     }
+    return sentAt;
+  }
+
+  it("keeps the minimum interval across lookups that run at the same time", async () => {
+    const sentAt = await lookUpTogether(1_000_000, 1_000);
     const gaps = sentAt.slice(1).map((t, i) => t - sentAt[i]);
     expect(sentAt.length).toBeGreaterThan(6);
-    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(interval);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(1_000);
+  });
+
+  it("gives up on a slot that would only come after the lookup deadline", async () => {
+    const started = 2_000_000;
+    const sentAt = await lookUpTogether(started, 1_000, 2_500);
+    expect(sentAt).toEqual([started, started + 1_000, started + 2_000]);
+    expect(Date.now() - started).toBeLessThanOrEqual(2_500);
   });
 });
 

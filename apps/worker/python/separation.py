@@ -101,22 +101,34 @@ class ChunkTensorTorch:
         return self.torch.tensor(data, dtype=dtype, **kwargs)
 
 
-def use_fast_chunk_tensors() -> None:
+def patch_mdx_torch() -> str:
     import numpy
     import torch
     from audio_separator.separator.architectures import mdx_separator
 
-    if getattr(mdx_separator, "torch", None) is torch:
-        mdx_separator.torch = ChunkTensorTorch(torch, numpy)
+    current = getattr(mdx_separator, "torch", None)
+    if isinstance(current, ChunkTensorTorch):
+        return "chunk tensor fast path already on"
+    if current is not torch:
+        return "chunk tensor fast path skipped: mdx_separator does not use the torch module directly"
+    mdx_separator.torch = ChunkTensorTorch(torch, numpy)
+    return "chunk tensor fast path on"
 
 
-def build_separator(model_dir: str, bitrate: str):
+def use_fast_chunk_tensors() -> str:
+    try:
+        return patch_mdx_torch()
+    except Exception as exc:
+        return f"chunk tensor fast path unavailable, separating unpatched: {type(exc).__name__}: {exc}"
+
+
+def build_separator(model_dir: str, bitrate: str, log):
     try:
         from audio_separator.separator import Separator
     except Exception as exc:
         raise SeparationError(f"failed to import audio_separator: {exc}") from exc
 
-    use_fast_chunk_tensors()
+    log(use_fast_chunk_tensors())
     return Separator(
         output_dir=model_dir,
         output_format="mp3",
@@ -191,7 +203,7 @@ class SeparationEngine:
         if key not in self.separators:
             self.probe(backend)
             Path(model_dir).mkdir(parents=True, exist_ok=True)
-            separator = build_separator(model_dir, bitrate)
+            separator = build_separator(model_dir, bitrate, self.log)
             separator.load_model(model_filename=model)
             self.separators[key] = separator
         return self.separators[key]

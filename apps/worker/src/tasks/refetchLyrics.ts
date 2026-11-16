@@ -1,9 +1,10 @@
 // Reruns the lyrics lookup and the vocals stem fallback for an already processed song, never downgrading stored lyrics.
-import type { Task } from "graphile-worker";
+import type { JobHelpers, Task } from "graphile-worker";
 import { pool, notify } from "../db.js";
 import { fetchLyrics, TRANSIENT_MISS_REASONS, type LyricsLogger, type LyricsResult, type LyricsSource } from "../steps/lyrics.js";
 import { addTimedLyrics, planTimedLyrics, transcriptionEnabled } from "../steps/timedLyrics.js";
 import { refetchPriority, type GpuPriority } from "../gpu/index.js";
+import { withSongLock } from "../songLock.js";
 import { withStemFile } from "../storage/stemFile.js";
 import { PgNotifyChannels } from "@karaoke/shared";
 
@@ -108,9 +109,7 @@ async function freshLyrics(stored: StoredLyricsRow, log: LyricsLogger): Promise<
   return fetchLyrics(stored, log);
 }
 
-export const refetchLyrics: Task = async (payload, helpers) => {
-  const { songId } = payload as RefetchLyricsPayload;
-  if (!songId) throw new Error("songId missing from payload");
+async function refetchLocked(songId: string, helpers: JobHelpers): Promise<void> {
   const log: LyricsLogger = (msg) => helpers.logger.info(`refetchLyrics ${songId} ${msg}`);
 
   const stored = await loadStoredLyrics(songId);
@@ -132,4 +131,10 @@ export const refetchLyrics: Task = async (payload, helpers) => {
     return;
   }
   await notify(PgNotifyChannels.queueUpdated, { reason: "lyrics_refetched", songId });
+}
+
+export const refetchLyrics: Task = async (payload, helpers) => {
+  const { songId } = payload as RefetchLyricsPayload;
+  if (!songId) throw new Error("songId missing from payload");
+  await withSongLock(songId, () => refetchLocked(songId, helpers));
 };

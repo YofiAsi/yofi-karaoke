@@ -36,15 +36,21 @@ class FakeSidecar extends EventEmitter {
     this.stdout.write(`${JSON.stringify(body)}\n`);
   }
 
-  exit(code: number | null): void {
+  exit(code: number | null, { thenClose = true } = {}): void {
     if (this.exitCode !== null || this.signalCode !== null) return;
     this.exitCode = code ?? 1;
     this.emit("exit", code, null);
+    if (thenClose) setImmediate(() => this.close());
+  }
+
+  close(): void {
+    this.emit("close", this.exitCode, null);
   }
 }
 
 function setup(options: { exitGraceMs?: number } = {}) {
   const spawned: FakeSidecar[] = [];
+  const killed: FakeSidecar[] = [];
   const sidecar = new GpuSidecar({
     spawn: () => {
       const child = new FakeSidecar();
@@ -54,11 +60,12 @@ function setup(options: { exitGraceMs?: number } = {}) {
     kill: (child) => {
       const fake = child as unknown as FakeSidecar;
       fake.killed = true;
+      killed.push(fake);
       fake.exit(null);
     },
     exitGraceMs: options.exitGraceMs ?? 200,
   });
-  return { sidecar, spawned };
+  return { sidecar, spawned, killed };
 }
 
 async function nextRequest(child: FakeSidecar, count = 1): Promise<Request> {
@@ -120,19 +127,62 @@ describe("GpuSidecar", () => {
     await expect(next).resolves.toBe("ok");
   });
 
-  it("reports a crash during a request with the stderr tail and restarts on the next request", async () => {
+  it("waits for stderr to drain after a crash, reports the traceback and restarts on the next request", async () => {
     const { sidecar, spawned } = setup();
     const pending = sidecar.request("transcribe", {}, 1_000);
     await nextRequest(spawned[0]);
+    spawned[0].exit(3221225477, { thenClose: false });
+    expect(sidecar.running).toBe(false);
     spawned[0].stderr.write("Traceback: access violation\n");
     await new Promise((r) => setTimeout(r, 10));
-    spawned[0].exit(3221225477);
+    spawned[0].close();
     await expect(pending).rejects.toThrow(/gpu sidecar exited with 3221225477 during transcribe[\s\S]*access violation/);
-    expect(sidecar.running).toBe(false);
 
     const next = sidecar.request("transcribe", {}, 1_000);
     spawned[1].reply({ id: (await nextRequest(spawned[1])).id, ok: true, result: "ok" });
     await expect(next).resolves.toBe("ok");
+  });
+
+  it("still fails the request when the pipes never close after a crash", async () => {
+    const { sidecar, spawned } = setup({ exitGraceMs: 20 });
+    const pending = sidecar.request("separate", {}, 1_000);
+    await nextRequest(spawned[0]);
+    spawned[0].exit(1, { thenClose: false });
+    await expect(pending).rejects.toThrow(/exited with 1 during separate/);
+  });
+
+  it("reports only the stderr written during the failing request", async () => {
+    const { sidecar, spawned } = setup();
+    const first = sidecar.request("separate", {}, 1_000);
+    const child = spawned[0];
+    await nextRequest(child);
+    child.stderr.write("noise from the previous song\n");
+    await new Promise((r) => setTimeout(r, 10));
+    child.reply({ id: 1, ok: true, result: "ok" });
+    await first;
+
+    const second = sidecar.request("separate", {}, 50);
+    await nextRequest(child, 2);
+    child.stderr.write("stuck in demix\n");
+    const error = await second.catch((err: Error) => err);
+    expect(String(error)).toContain("stuck in demix");
+    expect(String(error)).not.toContain("previous song");
+  });
+
+  it("starts nothing once shut down and kills the whole tree on process exit", async () => {
+    const { sidecar, spawned, killed } = setup();
+    const ping = sidecar.request("ping", {}, 1_000);
+    spawned[0].reply({ id: (await nextRequest(spawned[0])).id, ok: true, result: {} });
+    await ping;
+    sidecar.killNow();
+    expect(killed).toEqual([spawned[0]]);
+    await expect(sidecar.request("separate", {}, 1_000)).rejects.toThrow(/shut down/);
+    expect(spawned).toHaveLength(1);
+
+    const stopped = setup();
+    await stopped.sidecar.stop();
+    await expect(stopped.sidecar.request("separate", {}, 1_000)).rejects.toThrow(/shut down/);
+    expect(stopped.spawned).toHaveLength(0);
   });
 
   it("kills a stuck process on timeout, waits for it to exit and starts fresh", async () => {

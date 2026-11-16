@@ -281,9 +281,9 @@ async function lrclibRequest(
 
   for (let attempt = 0; ; attempt++) {
     if (!canQueryLrclib(run)) return { kind: "skipped" };
-    await waitForLrclibSlot();
+    const gotSlot = await waitForLrclibSlot(run.deadlineAt);
     const remainingMs = run.deadlineAt - Date.now();
-    if (remainingMs <= 0) return recordOutcome(run, label, { kind: "timeout", detail: "lookup deadline reached" });
+    if (!gotSlot || remainingMs <= 0) return recordOutcome(run, label, { kind: "timeout", detail: "lookup deadline reached" });
     const response = await fetchWithTimeout(url, Math.min(env.LRCLIB_TIMEOUT_MS, remainingMs));
     if (!(response instanceof Response)) return recordOutcome(run, label, response);
     if (response.status === 429 && attempt < env.LRCLIB_MAX_RETRIES) {
@@ -355,9 +355,14 @@ async function toOutcome(response: Response): Promise<HttpOutcome<unknown>> {
   }
 }
 
-async function waitForLrclibSlot(): Promise<void> {
-  while (Date.now() < nextLrclibSlotAt) await sleep(nextLrclibSlotAt - Date.now());
+async function waitForLrclibSlot(deadlineAt: number): Promise<boolean> {
+  while (Date.now() < nextLrclibSlotAt) {
+    if (nextLrclibSlotAt >= deadlineAt) return false;
+    await sleep(nextLrclibSlotAt - Date.now());
+  }
+  if (Date.now() >= deadlineAt) return false;
   nextLrclibSlotAt = Date.now() + env.LRCLIB_MIN_INTERVAL_MS;
+  return true;
 }
 
 export function retryDelayMs(response: Response, attempt: number): number {

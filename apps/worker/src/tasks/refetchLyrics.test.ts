@@ -25,6 +25,7 @@ vi.mock("../storage/stemFile.js", () => ({
   withStemFile: (key: string, use: (file: string) => Promise<unknown>) => use(`/stems/${key}`),
 }));
 
+import { withSongLock } from "../songLock.js";
 import { decideRefetch, refetchLyrics } from "./refetchLyrics.js";
 
 const synced: LyricsResult = { syncedLyrics: "[00:01.00]a", plainLyrics: "a", source: "lrclib", missReason: null, matchedQuery: "q" };
@@ -82,6 +83,18 @@ describe("refetchLyrics task", () => {
     vi.clearAllMocks();
     mockEnabled.mockReturnValue(false);
     mockQuery.mockResolvedValue({ rows: [row], rowCount: 1 });
+  });
+
+  it("waits while another job holds the song", async () => {
+    let release: () => void = () => void 0;
+    const held = withSongLock("s1", () => new Promise<void>((resolve) => (release = resolve)));
+    mockFetchLyrics.mockResolvedValueOnce(synced);
+    const refetch = refetchLyrics({ songId: "s1" }, helpers);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mockQuery).not.toHaveBeenCalled();
+    release();
+    await Promise.all([held, refetch]);
+    expect(mockQuery).toHaveBeenCalled();
   });
 
   it("returns without fetching when the song no longer exists", async () => {
