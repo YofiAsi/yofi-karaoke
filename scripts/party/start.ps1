@@ -170,8 +170,6 @@ function Set-CommonEnvironment([string]$HostPin, [string]$SessionSecret) {
     $env:STORAGE_DIR = $Paths.Stems
     $env:YTDLP_BIN = $Paths.YtDlp
     $env:PATH = "$($Paths.VenvBin);$env:PATH"
-    $env:MINIO_ACCESS_KEY = "unused-with-fs-storage"
-    $env:MINIO_SECRET_KEY = "unused-with-fs-storage"
     $env:HOST = "127.0.0.1"
     $env:PORT = "$ApiPort"
     $env:HOST_PIN = $HostPin

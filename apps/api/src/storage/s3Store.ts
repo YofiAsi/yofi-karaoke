@@ -17,8 +17,8 @@ function createClient(): S3Client {
     endpoint: `${env.MINIO_USE_SSL ? "https" : "http"}://${env.MINIO_ENDPOINT}`,
     forcePathStyle: true,
     credentials: {
-      accessKeyId: env.MINIO_ACCESS_KEY,
-      secretAccessKey: env.MINIO_SECRET_KEY,
+      accessKeyId: env.MINIO_ACCESS_KEY ?? "",
+      secretAccessKey: env.MINIO_SECRET_KEY ?? "",
     },
   });
 }

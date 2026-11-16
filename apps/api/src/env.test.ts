@@ -71,6 +71,29 @@ describe("parseEnv()", () => {
   });
 });
 
+describe("storage settings", () => {
+  const { MINIO_ACCESS_KEY: _key, MINIO_SECRET_KEY: _secret, ...withoutMinio } = BASE_ENV;
+
+  it("defaults to minio and requires its credentials", () => {
+    expect(parseEnv(BASE_ENV).STORAGE_DRIVER).toBe("minio");
+    expect(() => parseEnv(withoutMinio)).toThrow(/MINIO_ACCESS_KEY is required when STORAGE_DRIVER=minio/);
+  });
+
+  it("needs no MinIO settings with the folder driver", () => {
+    const env = parseEnv({ ...withoutMinio, STORAGE_DRIVER: "fs", STORAGE_DIR: "C:/party/stems" });
+    expect(env.STORAGE_DRIVER).toBe("fs");
+    expect(env.STORAGE_DIR).toBe("C:/party/stems");
+  });
+
+  it("requires STORAGE_DIR with the folder driver", () => {
+    expect(() => parseEnv({ ...withoutMinio, STORAGE_DRIVER: "fs" })).toThrow(/STORAGE_DIR is required/);
+  });
+
+  it("rejects unknown drivers", () => {
+    expect(() => parseEnv({ ...BASE_ENV, STORAGE_DRIVER: "s4" })).toThrow(/STORAGE_DRIVER/);
+  });
+});
+
 describe("resolveCorsOrigin()", () => {
   it("disables cross origin access for an empty list", () => {
     expect(resolveCorsOrigin([])).toBe(false);
