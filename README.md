@@ -18,10 +18,11 @@ Self-hosted party karaoke. Phones queue songs → GPU strips vocals → one desi
    ```bash
    bash scripts/detect-gpu-gids.sh >> .env
    ```
-3. Install JS deps (generates `pnpm-lock.yaml`):
+3. Install JS deps:
    ```bash
    pnpm install
    ```
+   Commit any `pnpm-lock.yaml` change together with the `package.json` change that caused it. Every image installs with `pnpm install --frozen-lockfile`, so a stale lockfile fails the build.
 4. Start the full stack (compose file has **no published ports** — for laptop access, add an override; see below):
    ```bash
    docker compose up -d --build
@@ -59,11 +60,24 @@ Production uses **[`docker-compose.yml`](docker-compose.yml)** only (Intel/OpenV
 
 1. Add the compose project in Dokploy (same `docker-compose.yml`).
 2. Set **build arguments** for the `web` image if you change public URLs: `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WS_URL` (defaults are in the compose `build.args`; see `.env.example` comments). Rebuild the web image after changing `NEXT_PUBLIC_*`.
-3. Set runtime environment variables in Dokploy (from `.env.example`).
+3. Set runtime environment variables in Dokploy (from `.env.example`). `HOST_PIN` and `SESSION_SECRET` are required by the api. `CORS_ORIGIN` is optional and is forwarded only when set. Optional container tuning: `YTDLP_AUTO_UPDATE` (default `true`) and `YTDLP_UPDATE_TIMEOUT_SECONDS` (default `120`), see [Containers](#containers).
 4. **Routing Socket.IO:** the browser connects with path `/socket.io`. Next.js rewrites do **not** proxy WebSocket upgrades, so the edge proxy must forward **`/socket.io`** (and typically **`/api`**) on your public hostname to the **`api`** service (`:4000` inside the stack). Forward **`/`** to **`web`** (`:3000`). Example host: `yofikaraoke.asafshilo.com` — TLS is terminated by Dokploy, not by this repository.
 5. Deploy. Services are not published on the host; only Dokploy’s routing reaches them.
 
 See [`docs/phase-4-dokploy-smoke.md`](docs/phase-4-dokploy-smoke.md) for a post-deploy smoke checklist.
+
+### Containers
+
+- **yt-dlp freshness:** the api and worker entrypoint upgrades `yt-dlp[default]` in `/opt/venv` on every container start, then logs the yt-dlp and Deno versions. A failed or slow upgrade (over `YTDLP_UPDATE_TIMEOUT_SECONDS`) only logs a warning and the container starts with the version already installed. Set `YTDLP_AUTO_UPDATE=false` to skip it. Restarting the api and worker is enough to pick up a new yt-dlp release; no rebuild is needed.
+- **Deno** is installed in the api and worker images because current yt-dlp needs a JavaScript runtime for YouTube.
+- **Python:** the worker images run Python 3.11 from `/opt/venv`; `PYTHON_BIN` is set to `/opt/venv/bin/python` in the image.
+- **Volumes:** besides Postgres and MinIO data, the worker keeps the separation model (`/app/models`) and its scratch dir (`/tmp/karaoke`) on named volumes, so the model is downloaded once instead of on every deploy.
+- **Shutdown:** node receives SIGTERM directly (exec form commands plus `init: true`). The worker has `stop_grace_period: 6m`: on redeploy it stops taking jobs and finishes the song it is processing before the container exits.
+- **Health:** the worker is healthy when its node process is running and Postgres answers a query; MinIO is checked with `mc ready local`; api and worker start only after Postgres and MinIO are healthy.
+
+## CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pushes to `main` and on pull requests: frozen lockfile install, `packages/shared` build, Prisma client generation, `tsc --noEmit` for api, web and worker, and the vitest suites of api and web. The worker has no tests yet.
 
 ## Architecture
 
@@ -73,6 +87,6 @@ See [`docs/phase-4-dokploy-smoke.md`](docs/phase-4-dokploy-smoke.md) for a post-
 - **postgres** (16) — primary store + graphile-worker queue.
 - **minio** — S3-compatible object store for instrumental audio files.
 
-The API shells out to `yt-dlp` for search and metadata lookups, so the API image installs `yt-dlp` + Python + ffmpeg alongside Node.
+The API shells out to `yt-dlp` for search and metadata lookups, so the API image installs `yt-dlp` + Python + Deno + ffmpeg alongside Node, and refreshes yt-dlp on start.
 
 For local (non-Docker) dev of the API you need `yt-dlp` and `ffmpeg` on your PATH. The worker additionally needs the Intel graphics + OpenVINO stack (or the NVIDIA stack when using `docker-compose.nvidia.yml`), which is why running the worker inside Docker is strongly recommended.
