@@ -1,5 +1,5 @@
 // Builds the queue view: current comes from PlaybackState, upcoming from position order.
-import { QueueState, type ProcessingJob, type QueueItem, type Song, type User } from "@prisma/client";
+import { QueueState, type Prisma, type ProcessingJob, type QueueItem, type User } from "@prisma/client";
 import type { ProcessingStep, QueueItem as QueueItemView, QueueView } from "@karaoke/shared";
 import { prisma } from "../db.js";
 import { PLAYBACK_STATE_ID } from "../playback/notify.js";
@@ -11,10 +11,25 @@ export const VISIBLE_QUEUE_STATES: QueueState[] = [
   QueueState.failed,
 ];
 
-export type QueueItemWithRelations = QueueItem & { song: Song; requestedByUser: User };
+export const SONG_VIEW_SELECT = {
+  id: true,
+  youtubeVideoId: true,
+  title: true,
+  artist: true,
+  channel: true,
+  durationSeconds: true,
+  thumbnailUrl: true,
+  instrumentalObjectKey: true,
+  vocalsObjectKey: true,
+  lyricsLrc: true,
+  lyricsPlain: true,
+} satisfies Prisma.SongSelect;
+
+export type SongViewFields = Prisma.SongGetPayload<{ select: typeof SONG_VIEW_SELECT }>;
+export type QueueItemWithRelations = QueueItem & { song: SongViewFields; requestedByUser: User };
 type JobSummary = Pick<ProcessingJob, "songId" | "step" | "progressPct" | "errorMessage">;
 
-function toSongView(song: Song): QueueItemView["song"] {
+export function toSongView(song: SongViewFields): QueueItemView["song"] {
   return {
     id: song.id,
     youtubeVideoId: song.youtubeVideoId,
@@ -80,7 +95,7 @@ export async function loadQueueView(): Promise<QueueView> {
   const items = await prisma.queueItem.findMany({
     where: { state: { in: VISIBLE_QUEUE_STATES } },
     orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-    include: { song: true, requestedByUser: true },
+    include: { song: { select: SONG_VIEW_SELECT }, requestedByUser: true },
   });
   const songIds = items.map((i) => i.songId);
   const jobs = songIds.length
