@@ -8,7 +8,7 @@ ARG NEXT_PUBLIC_WS_URL=same-origin
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL}
 COPY . .
-RUN pnpm install
+RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @karaoke/shared build
 RUN pnpm --filter web build
 

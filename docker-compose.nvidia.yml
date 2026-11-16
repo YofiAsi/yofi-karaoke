@@ -1,6 +1,7 @@
 services:
   web:
     image: karaoke-web
+    init: true
     build:
       context: .
       dockerfile: apps/web/Dockerfile
@@ -24,6 +25,7 @@ services:
 
   api:
     image: karaoke-api
+    init: true
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -37,11 +39,13 @@ services:
       - HOST_STALE_SECONDS=30
       - PLAYER_STALE_SECONDS=20
       - SESSION_SECRET=${SESSION_SECRET}
+      - HOST_PIN=${HOST_PIN}
+      - CORS_ORIGIN
     depends_on:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -56,6 +60,8 @@ services:
 
   worker:
     image: karaoke-worker-nvidia
+    init: true
+    stop_grace_period: 6m
     build:
       context: .
       dockerfile: apps/worker/Dockerfile.nvidia
@@ -78,15 +84,18 @@ services:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
       api:
         condition: service_healthy
+    volumes:
+      - models:/app/models
+      - worker-tmp:/tmp/karaoke
     healthcheck:
-      test: ["CMD-SHELL", "pidof node >/dev/null 2>&1 || exit 1"]
+      test: ["CMD", "node", "/app/apps/worker/healthcheck.cjs"]
       interval: 30s
-      timeout: 5s
+      timeout: 15s
       retries: 3
-      start_period: 120s
+      start_period: 180s
     restart: unless-stopped
 
   postgres:
@@ -110,6 +119,12 @@ services:
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     volumes:
       - miniodata:/data
     restart: unless-stopped
@@ -117,3 +132,5 @@ services:
 volumes:
   pgdata:
   miniodata:
+  models:
+  worker-tmp:

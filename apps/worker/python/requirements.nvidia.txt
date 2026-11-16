@@ -2,4 +2,4 @@
 torch>=2.7.0
 onnxruntime-gpu>=1.22.0
 audio-separator>=0.44.0
-yt-dlp
+yt-dlp[default]

@@ -1,3 +1,5 @@
+FROM denoland/deno:bin-2.9.8 AS deno
+
 FROM node:22-bookworm-slim AS node-builder
 RUN corepack enable
 WORKDIR /app
@@ -13,14 +15,19 @@ RUN pnpm --filter worker build
 
 FROM ubuntu:22.04 AS runner
 ENV DEBIAN_FRONTEND=noninteractive
+ENV VENV_DIR=/opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+ENV PYTHON_BIN=/opt/venv/bin/python
 
 RUN apt-get update && apt-get install -y \
   curl \
   gnupg \
   ca-certificates \
   procps \
+  build-essential \
   python3.11 \
-  python3-pip \
+  python3.11-dev \
+  python3.11-venv \
   ffmpeg \
   clinfo \
   && rm -rf /var/lib/apt/lists/*
@@ -38,11 +45,18 @@ RUN curl -fsSL https://repositories.intel.com/graphics/intel-graphics.key \
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
   apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
 
+COPY --from=deno /deno /usr/local/bin/deno
+
 COPY apps/worker/python/requirements.txt /tmp/requirements.txt
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
+RUN python3.11 -m venv /opt/venv \
+  && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+  && /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
 
 WORKDIR /app
 COPY --from=node-builder /app /app
+COPY scripts/docker/entrypoint.sh /usr/local/bin/karaoke-entrypoint.sh
+COPY scripts/docker/worker-healthcheck.cjs /app/apps/worker/healthcheck.cjs
 
 WORKDIR /app/apps/worker
-CMD clinfo -l && node dist/index.js
+ENTRYPOINT ["sh", "/usr/local/bin/karaoke-entrypoint.sh"]
+CMD ["sh", "-c", "clinfo -l && exec node dist/index.js"]
