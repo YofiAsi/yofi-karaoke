@@ -190,7 +190,7 @@ function Start-Child([string]$Name, [string]$Exe, [string[]]$Arguments, [string]
     $err = Join-Path $script:RunLogs "$Name.err.log"
     $process = Start-Process -FilePath $Exe -ArgumentList $Arguments -WorkingDirectory $WorkDir `
         -RedirectStandardOutput $out -RedirectStandardError $err -WindowStyle Hidden -PassThru
-    $started = $process.StartTime.ToUniversalTime().ToString("o")
+    $started = $process.StartTime.ToUniversalTime().Ticks
     [void]$script:Children.Add([pscustomobject]@{ name = $Name; pid = $process.Id; started = $started; process = $process; log = $out; err = $err })
     Save-ProcessList
     return $process
@@ -222,7 +222,9 @@ function Get-ExitedChild {
 }
 
 function Show-ChildFailure($Child) {
-    Write-Host "$($Child.name) exited with code $($Child.process.ExitCode). Last log lines:" -ForegroundColor Red
+    $code = $Child.process.ExitCode
+    $how = if ($null -eq $code) { "stopped" } else { "exited with code $code" }
+    Write-Host "$($Child.name) $how. Last log lines:" -ForegroundColor Red
     foreach ($file in @($Child.err, $Child.log)) {
         if (Test-Path $file) { Get-Content $file -Tail 20 | ForEach-Object { Write-Host "  $_" } }
     }
@@ -256,12 +258,29 @@ function Start-QuickTunnel {
     while ((Get-Date) -lt $deadline) {
         $entry = $script:Children | Where-Object { $_.name -eq "tunnel" }
         $match = Select-String -Path $entry.err -Pattern "https://[a-z0-9-]+\.trycloudflare\.com" -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($match) { return $match.Matches[0].Value }
+        if ($match) { return (Wait-PublicDns $match.Matches[0].Value) }
         if ($child.HasExited) { break }
         Start-Sleep -Milliseconds 500
     }
     Write-Host "The tunnel did not report a public URL; see $($entry.err)" -ForegroundColor Yellow
     return $null
+}
+
+function Test-PublicDns([string]$HostName) {
+    try {
+        return [bool](Resolve-DnsName -Name $HostName -Server "1.1.1.1" -DnsOnly -QuickTimeout -ErrorAction Stop)
+    } catch { return $false }
+}
+
+function Wait-PublicDns([string]$Url) {
+    $hostName = ([Uri]$Url).Host
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-PublicDns $hostName) { return $Url }
+        Start-Sleep -Seconds 2
+    }
+    Write-Host "The public name is not resolvable yet; give it a minute before sharing it." -ForegroundColor Yellow
+    return $Url
 }
 
 function Show-Urls([string]$PublicUrl) {

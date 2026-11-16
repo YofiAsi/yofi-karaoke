@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File scripts\party\start.ps1
 powershell -ExecutionPolicy Bypass -File scripts\party\start.ps1 -Tunnel
 ```
 
-The first start asks for the host PIN once and stores it with a generated `SESSION_SECRET`. Each start checks prerequisites, starts a private Postgres cluster on `127.0.0.1:54329` (trust auth, localhost only, separate from any Postgres service on the PC), applies migrations, rebuilds when the checkout changed, then starts api (`127.0.0.1:4100`), worker and web (`0.0.0.0:3000`) and prints the addresses. `-Tunnel` also starts `cloudflared tunnel --url http://localhost:3000` and prints the public `trycloudflare.com` URL; it changes on every start. Ports can be changed with `-WebPort`, `-ApiPort` and `-PgPort`.
+The first start asks for the host PIN once and stores it with a generated `SESSION_SECRET`. The host joins with the name `Host` (set `HOST_USER_NAME` before starting to change it) and that PIN. Each start checks prerequisites, starts a private Postgres cluster on `127.0.0.1:54329` (trust auth, localhost only, separate from any Postgres service on the PC), applies migrations, rebuilds when the checkout changed, then starts api (`127.0.0.1:4100`), worker and web (`0.0.0.0:3000`) and prints the addresses. `-Tunnel` also starts `cloudflared tunnel --url http://localhost:3000` and prints the public `trycloudflare.com` URL once public DNS knows it; the URL changes on every start. A phone that opened the link before the name existed may cache the failure for a few minutes; switching it to mobile data or waiting fixes that. Ports can be changed with `-WebPort`, `-ApiPort` and `-PgPort`.
 
 Press Ctrl+C to stop everything, Postgres included. After a crash or a closed window run:
 
@@ -109,7 +109,7 @@ Everything is under `%LOCALAPPDATA%\yofi-karaoke` (override with `-DataDir` or `
 
 | Folder | Contents |
 | --- | --- |
-| `uv`, `python`, `venv`, `cache` | uv, the private Python, the GPU venv and the uv download cache |
+| `uv`, `python`, `venv`, `cache` | uv, the private Python, the GPU venv and the uv download cache (the venv hardlinks into the cache, so deleting `cache` frees little) |
 | `models` | the separation model, fetched on the first song |
 | `pgsql` | PostgreSQL server binaries when downloaded by setup |
 | `postgres` | the private database cluster |
@@ -122,7 +122,7 @@ To wipe the songs and the database but keep the tools, stop party mode and delet
 
 ### Expected time per song
 
-Measured on the RTX 5090 with a 3.5 minute song: separation takes 20 to 24 s, and the YouTube download about 10 s, so a song is usually ready well under a minute after it is queued. The very first song after setup takes about 80 s longer because the model is downloaded and the GPU kernels are compiled once.
+Measured on the RTX 5090 with 3.5 minute songs: about 31 to 36 s per song from start to ready, of which separation is about 21 s and the rest is the YouTube download and the lyrics lookup. Songs are processed one at a time, so a second song queued at the same moment is ready about a minute later. The very first song after setup takes about 80 s longer because the model is downloaded and the GPU kernels are compiled once.
 
 ## Deployment (Dokploy)
 

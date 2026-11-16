@@ -7,9 +7,11 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   ...(standalone ? { output: "standalone" as const } : {}),
   transpilePackages: ["@karaoke/shared"],
+  skipTrailingSlashRedirect: true,
   async rewrites() {
     return [
       { source: "/api/:path*", destination: `${apiTarget}/api/:path*` },
+      { source: "/socket.io", destination: `${apiTarget}/socket.io/` },
       { source: "/socket.io/:path*", destination: `${apiTarget}/socket.io/:path*` },
     ];
   },
