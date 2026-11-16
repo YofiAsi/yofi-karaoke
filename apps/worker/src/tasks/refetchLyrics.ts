@@ -3,6 +3,7 @@ import type { JobHelpers, Task } from "graphile-worker";
 import { pool, notify } from "../db.js";
 import { fetchLyrics, TRANSIENT_MISS_REASONS, type LyricsLogger, type LyricsResult, type LyricsSource } from "../steps/lyrics.js";
 import { addTimedLyrics, planTimedLyrics, transcriptionEnabled } from "../steps/timedLyrics.js";
+import { romanizeLyrics } from "../steps/romaji.js";
 import { refetchPriority, type GpuPriority } from "../gpu/index.js";
 import { withSongLock } from "../songLock.js";
 import { withStemFile } from "../storage/stemFile.js";
@@ -51,6 +52,19 @@ async function saveLyricsIfUnchanged(songId: string, lyrics: LyricsResult, store
         AND "lyricsLrc" IS NOT DISTINCT FROM $6
         AND "lyricsPlain" IS NOT DISTINCT FROM $7`,
     [songId, lyrics.syncedLyrics, lyrics.plainLyrics, lyrics.source, lyrics.missReason, stored.lyricsLrc, stored.lyricsPlain],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+async function saveTextIfUnchanged(songId: string, lyrics: LyricsResult, stored: StoredLyrics): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `UPDATE "Song"
+        SET "lyricsLrc" = $2,
+            "lyricsPlain" = $3
+      WHERE id = $1
+        AND "lyricsLrc" IS NOT DISTINCT FROM $4
+        AND "lyricsPlain" IS NOT DISTINCT FROM $5`,
+    [songId, lyrics.syncedLyrics, lyrics.plainLyrics, stored.lyricsLrc, stored.lyricsPlain],
   );
   return (rowCount ?? 0) > 0;
 }
@@ -109,6 +123,19 @@ async function freshLyrics(stored: StoredLyricsRow, log: LyricsLogger): Promise<
   return fetchLyrics(stored, log);
 }
 
+function sameText(lyrics: LyricsResult, stored: StoredLyrics): boolean {
+  return lyrics.syncedLyrics === stored.lyricsLrc && lyrics.plainLyrics === stored.lyricsPlain;
+}
+
+async function romanizeStored(songId: string, stored: StoredLyricsRow, log: LyricsLogger): Promise<void> {
+  const romanized = await romanizeLyrics(storedAsResult(stored), log);
+  if (sameText(romanized, stored)) return;
+  if (await saveTextIfUnchanged(songId, romanized, stored)) {
+    log("stored lyrics rewritten as romaji");
+    await notify(PgNotifyChannels.queueUpdated, { reason: "lyrics_refetched", songId });
+  }
+}
+
 async function refetchLocked(songId: string, helpers: JobHelpers): Promise<void> {
   const log: LyricsLogger = (msg) => helpers.logger.info(`refetchLyrics ${songId} ${msg}`);
 
@@ -119,14 +146,17 @@ async function refetchLocked(songId: string, helpers: JobHelpers): Promise<void>
   }
   const looked = await freshLyrics(stored, log);
   if (decideRefetch(stored, looked) === "retry") {
+    await romanizeStored(songId, stored, log);
     throw new Error(`lyrics refetch for ${songId} hit a transient failure (${looked.missReason}); retrying later`);
   }
   const lyrics = await withVocalsFallback(stored, looked, log, refetchPriority(helpers.job));
   if (decideRefetch(stored, lyrics) === "keep") {
     log(`kept stored lyrics; new result (${lyrics.source}) is worse`);
+    await romanizeStored(songId, stored, log);
     return;
   }
-  if (!(await saveLyricsIfUnchanged(songId, lyrics, stored))) {
+  const romanized = await romanizeLyrics(lyrics, log);
+  if (!(await saveLyricsIfUnchanged(songId, romanized, stored))) {
     log("lyrics changed while this job ran; result dropped");
     return;
   }

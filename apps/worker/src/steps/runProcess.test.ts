@@ -54,6 +54,12 @@ describe("runProcess", () => {
     expect(out.stderr.trim()).toBe("warn");
   });
 
+  it("writes the given input to stdin as UTF-8", async () => {
+    const echo = "let s = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (c) => (s += c)); process.stdin.on('end', () => process.stdout.write(JSON.stringify(s)));";
+    const out = await runProcess(process.execPath, ["-e", echo], { timeoutMs: 10_000, input: "ゆめ line" });
+    expect(JSON.parse(out.stdout)).toBe("ゆめ line");
+  });
+
   it("rejects with the exit code and stderr", async () => {
     await expect(
       runProcess(process.execPath, ["-e", "console.error('boom'); process.exit(3)"], { timeoutMs: 10_000, label: "probe" }),

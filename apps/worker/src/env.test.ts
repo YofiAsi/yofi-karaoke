@@ -44,6 +44,13 @@ describe("worker env", () => {
     expect(parseEnv({ ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x", LYRICS_TAB4U_ENABLED: "false" }).LYRICS_TAB4U_ENABLED).toBe(false);
   });
 
+  it("enables romaji for Japanese lyrics by default and lets it be switched off", () => {
+    const base = { ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x" };
+    expect(parseEnv(base).LYRICS_ROMAJI_ENABLED).toBe(true);
+    expect(parseEnv({ ...base, LYRICS_ROMAJI_ENABLED: "false" }).LYRICS_ROMAJI_ENABLED).toBe(false);
+    expect(() => parseEnv({ ...base, LYRICS_ROMAJI_ENABLED: "yes" })).toThrow();
+  });
+
   it("keeps transcription off unless asked for", () => {
     const env = parseEnv({ ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x" });
     expect(env.TRANSCRIBE_BACKEND).toBe("none");

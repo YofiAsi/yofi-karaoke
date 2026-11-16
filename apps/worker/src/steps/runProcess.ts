@@ -10,6 +10,7 @@ export interface RunOptions {
   timeoutMs: number;
   label?: string;
   env?: NodeJS.ProcessEnv;
+  input?: string;
 }
 
 export function treeKillCommand(platform: NodeJS.Platform, pid: number): [string, string[]] | null {
@@ -29,7 +30,10 @@ export function killTree(child: ChildProcess): void {
 export function runProcess(cmd: string, args: string[], opts: RunOptions): Promise<ProcessOutput> {
   const label = opts.label ?? cmd;
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env: opts.env ?? process.env });
+    const stdin = opts.input === undefined ? "ignore" : "pipe";
+    const child = spawn(cmd, args, { stdio: [stdin, "pipe", "pipe"], windowsHide: true, env: opts.env ?? process.env });
+    child.stdin?.on("error", () => void 0);
+    child.stdin?.end(opts.input, "utf8");
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (c: Buffer) => (stdout += c.toString()));
