@@ -6,7 +6,7 @@ vi.mock("../auth/userCookie.js", () => ({ requireUser: vi.fn() }));
 vi.mock("../playback/transitions.js", () => ({ lockPlaybackState: vi.fn() }));
 
 import { moveDenial, removalDenial, retryDenial, type Actor } from "./permissions.js";
-import { planSwap } from "./management.js";
+import { planMove } from "./management.js";
 
 const REQUESTER: Actor = { userId: "requester", isHost: false };
 const STRANGER: Actor = { userId: "stranger", isHost: false };
@@ -60,24 +60,52 @@ describe("moveDenial", () => {
   });
 });
 
-describe("planSwap", () => {
+function applyMove(items: { id: string; position: number }[], updates: { id: string; position: number }[]) {
+  const byId = new Map(updates.map((u) => [u.id, u.position]));
+  return items
+    .map((i) => ({ ...i, position: byId.get(i.id) ?? i.position }))
+    .sort((a, b) => a.position - b.position)
+    .map((i) => i.id);
+}
+
+describe("planMove", () => {
   const upcoming = [
     { id: "a", position: 2 },
     { id: "b", position: 5 },
     { id: "c", position: 9 },
   ];
 
-  it("swaps with the neighbor in the requested direction", () => {
-    expect(planSwap(upcoming, "b", "up")).toEqual({ kind: "swap", moving: upcoming[1], neighbor: upcoming[0] });
-    expect(planSwap(upcoming, "b", "down")).toEqual({ kind: "swap", moving: upcoming[1], neighbor: upcoming[2] });
+  it("swaps positions with the neighbor in the requested direction", () => {
+    expect(planMove(upcoming, "b", "up")).toEqual({
+      kind: "reorder",
+      updates: [
+        { id: "b", position: 2 },
+        { id: "a", position: 5 },
+      ],
+    });
+    const down = planMove(upcoming, "b", "down");
+    expect(down.kind === "reorder" && applyMove(upcoming, down.updates)).toEqual(["a", "c", "b"]);
+  });
+
+  it("really reorders items that share a position", () => {
+    const tied = [
+      { id: "a", position: 4 },
+      { id: "b", position: 4 },
+      { id: "c", position: 4 },
+    ];
+    const plan = planMove(tied, "c", "up");
+    expect(plan.kind).toBe("reorder");
+    if (plan.kind !== "reorder") return;
+    expect(plan.updates.length).toBeGreaterThan(0);
+    expect(applyMove(tied, plan.updates)).toEqual(["a", "c", "b"]);
   });
 
   it("does nothing at either end", () => {
-    expect(planSwap(upcoming, "a", "up")).toEqual({ kind: "edge" });
-    expect(planSwap(upcoming, "c", "down")).toEqual({ kind: "edge" });
+    expect(planMove(upcoming, "a", "up")).toEqual({ kind: "edge" });
+    expect(planMove(upcoming, "c", "down")).toEqual({ kind: "edge" });
   });
 
   it("reports items that are not upcoming", () => {
-    expect(planSwap(upcoming, "current", "up")).toEqual({ kind: "missing" });
+    expect(planMove(upcoming, "current", "up")).toEqual({ kind: "missing" });
   });
 });
