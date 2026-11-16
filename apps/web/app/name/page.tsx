@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError } from "@/lib/api";
 import { createUser, validateStoredUser } from "@/lib/user";
+import { returnPathFromSearch } from "@/lib/returnPath";
 
 const ERROR_MESSAGES: Record<string, string> = {
   host_name_taken: "That host name is already active. Wait 30 seconds or pick another.",
@@ -16,6 +17,10 @@ const ERROR_MESSAGES: Record<string, string> = {
 function describeError(err: unknown): string {
   const code = err instanceof ApiError ? err.code : "";
   return ERROR_MESSAGES[code] ?? "Could not join. Try again.";
+}
+
+function returnPath(): string {
+  return returnPathFromSearch(window.location.search);
 }
 
 function needsPin(err: unknown): boolean {
@@ -32,7 +37,7 @@ export default function NamePage() {
 
   useEffect(() => {
     validateStoredUser().then((existing) => {
-      if (existing) router.replace("/");
+      if (existing) router.replace(returnPath());
     });
   }, [router]);
 
@@ -50,7 +55,7 @@ export default function NamePage() {
     setError(null);
     try {
       await createUser(trimmed, pinVisible ? pin : undefined);
-      router.replace("/");
+      router.replace(returnPath());
     } catch (err) {
       if (needsPin(err)) setPinVisible(true);
       setError(describeError(err));

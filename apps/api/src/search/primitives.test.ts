@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createTtlCache } from "./ttlCache.js";
 import { createRateLimiter } from "./rateLimiter.js";
-import { createConcurrencyLimiter } from "./concurrency.js";
+import { createConcurrencyLimiter, LimiterBusyError } from "./concurrency.js";
 import { normalizeQuery, toSearchResults } from "./results.js";
 
 describe("ttl cache", () => {
@@ -36,6 +36,24 @@ describe("concurrency limiter", () => {
     await Promise.all([limiter.run(task), limiter.run(task), limiter.run(task)]);
     expect(peak).toBe(1);
     expect(limiter.active()).toBe(0);
+  });
+});
+
+describe("bounded wait queue", () => {
+  it("rejects new tasks once the wait queue is full and accepts them again after it drains", async () => {
+    const limiter = createConcurrencyLimiter(1, 1);
+    let release!: () => void;
+    const blocked = new Promise<void>((r) => (release = r));
+    const first = limiter.run(() => blocked);
+    const second = limiter.run(async () => "queued");
+
+    await expect(limiter.run(async () => "overflow")).rejects.toBeInstanceOf(LimiterBusyError);
+    expect(limiter.pending()).toBe(1);
+
+    release();
+    await first;
+    expect(await second).toBe("queued");
+    expect(await limiter.run(async () => "later")).toBe("later");
   });
 });
 

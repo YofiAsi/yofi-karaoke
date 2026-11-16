@@ -4,7 +4,7 @@ import { requireUser } from "../auth/userCookie.js";
 import { ytdlpSearch } from "../ytdlp.js";
 import { isYtVideoUnavailableMessage } from "../ytdlp/isVideoUnavailable.js";
 import { toSearchResults } from "../search/results.js";
-import { createSearchService } from "../search/searchService.js";
+import { createSearchService, SearchBusyError } from "../search/searchService.js";
 
 const YTDLP_SEARCH_COUNT = 10;
 
@@ -28,6 +28,9 @@ export async function registerSearchRoutes(app: FastifyInstance): Promise<void> 
         }
         return reply.send(outcome.results);
       } catch (err) {
+        if (err instanceof SearchBusyError) {
+          return reply.code(503).header("Retry-After", "5").send({ error: "search_busy" });
+        }
         const msg = err instanceof Error ? err.message : String(err);
         if (isYtVideoUnavailableMessage(msg)) {
           return reply.code(422).send({ error: "video_unavailable" });

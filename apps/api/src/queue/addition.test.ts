@@ -6,6 +6,7 @@ const { mockPrisma, enqueueProcessSong, ytdlpInfo, events } = vi.hoisted(() => {
   const mockPrisma = {
     song: { findUnique: vi.fn(), upsert: vi.fn(), findUniqueOrThrow: vi.fn() },
     user: { findUnique: vi.fn() },
+    playbackState: { findUnique: vi.fn() },
     queueItem: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn(), aggregate: vi.fn(), count: vi.fn() },
     processingJob: { findFirst: vi.fn(), deleteMany: vi.fn(), create: vi.fn() },
     $queryRaw: vi.fn(async () => {
@@ -52,8 +53,10 @@ function givenQueue({
   openJob = null as unknown,
   userActiveCount = 0,
   isHost = false,
+  hostUserId = undefined as string | undefined,
 }) {
   mockPrisma.user.findUnique.mockResolvedValue({ isHost });
+  mockPrisma.playbackState.findUnique.mockResolvedValue({ hostUserId: hostUserId ?? (isHost ? USER_ID : null) });
   mockPrisma.queueItem.count.mockResolvedValue(userActiveCount);
   mockPrisma.queueItem.findFirst.mockImplementation(async ({ where }: { where: { state: unknown } }) =>
     where.state === "failed" ? failed : active,
@@ -181,11 +184,27 @@ describe("queueSong per user limit", () => {
     expect(mockPrisma.queueItem.updateMany).not.toHaveBeenCalled();
   });
 
-  it("does not count a retry that keeps the original requester", async () => {
+  it("applies the limit to the original requester when a failed item is retried", async () => {
     givenQueue({ userActiveCount: 5 });
+
+    await expect(reviveFailedItem(FAILED_ITEM as never, song())).rejects.toMatchObject({ message: "queue_limit" });
+    expect(mockPrisma.queueItem.count).toHaveBeenCalledWith({
+      where: { requestedByUserId: FAILED_ITEM.requestedByUserId, state: { in: ["queued", "processing", "ready"] } },
+    });
+    expect(mockPrisma.queueItem.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("allows a retry while the original requester is under the limit", async () => {
+    givenQueue({ userActiveCount: 4 });
     mockPrisma.queueItem.updateMany.mockResolvedValue({ count: 1 });
 
     await expect(reviveFailedItem(FAILED_ITEM as never, song())).resolves.toMatchObject({ state: "queued" });
+  });
+
+  it("does not exempt a stored host flag that is not the current host", async () => {
+    givenQueue({ userActiveCount: 5, isHost: true, hostUserId: ALICE_ID });
+
+    await expect(queueSong(song(), USER_ID)).rejects.toMatchObject({ message: "queue_limit" });
   });
 
   it("compares the active count against the limit", () => {

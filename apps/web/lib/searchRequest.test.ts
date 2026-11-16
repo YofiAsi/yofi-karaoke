@@ -28,6 +28,10 @@ describe("searchYoutube", () => {
     expect(await searchYoutube("q", signal, respond(422, { error: "video_unavailable" }))).toEqual({ kind: "unavailable" });
     expect(await searchYoutube("q", signal, respond(502, { error: "search_failed" }))).toEqual({ kind: "failed" });
   });
+
+  it("reports a busy server separately", async () => {
+    expect(await searchYoutube("q", signal, respond(503, { error: "search_busy" }))).toEqual({ kind: "busy" });
+  });
 });
 
 describe("addSongErrorMessage", () => {

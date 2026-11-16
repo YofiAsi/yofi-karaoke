@@ -22,6 +22,7 @@ type SearchStatus =
 function statusOf(outcome: SearchOutcome, query: string): SearchStatus {
   if (outcome.kind === "ok") return { kind: "done", query };
   if (outcome.kind === "rate_limited") return { kind: "rate_limited", retryAfterSeconds: outcome.retryAfterSeconds };
+  if (outcome.kind === "busy") return { kind: "error", message: "Search is busy right now. Try again in a few seconds." };
   if (outcome.kind === "unavailable") return { kind: "error", message: "That video is unavailable or private." };
   return { kind: "error", message: "Search failed. Try again." };
 }
