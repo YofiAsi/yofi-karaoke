@@ -1,6 +1,6 @@
 /* Manual cleanup of stem objects no Song references. Dry run by default; `corepack pnpm --filter api purge:objects --yes` deletes. */
 import { prisma } from "../db.js";
-import { deleteObjectKeys, listObjects, type StoredObject } from "../minio.js";
+import { storage, type StoredObject } from "../storage/index.js";
 import { planPurge, PURGE_MIN_AGE_MS } from "./purgePlan.js";
 
 const STEM_PREFIXES = ["instrumentals/", "vocals/"];
@@ -9,7 +9,7 @@ const CONFIRM_FLAG = "--yes";
 async function listStemObjects(): Promise<StoredObject[]> {
   const objects: StoredObject[] = [];
   for (const prefix of STEM_PREFIXES) {
-    objects.push(...(await listObjects(prefix)));
+    objects.push(...(await storage.listObjects(prefix)));
   }
   return objects;
 }
@@ -35,7 +35,7 @@ async function main(): Promise<void> {
     console.log(`dry run; rerun with ${CONFIRM_FLAG} to delete the ${plan.deleteKeys.length} unreferenced objects`);
     return;
   }
-  const deleted = await deleteObjectKeys(plan.deleteKeys);
+  const deleted = await storage.deleteObjectKeys(plan.deleteKeys);
   console.log(`deleted ${deleted} objects, kept ${plan.keptReferenced + plan.keptRecent}`);
 }
 
