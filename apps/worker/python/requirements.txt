@@ -2,3 +2,4 @@ audio-separator[gpu]==0.28.5
 onnxruntime-openvino==1.19.0
 openvino==2024.4.0
 yt-dlp[default]
+pykakasi>=2.3,<3

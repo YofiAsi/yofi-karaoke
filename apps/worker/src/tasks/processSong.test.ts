@@ -13,10 +13,11 @@ const m = vi.hoisted(() => ({
   upload: vi.fn(),
   ready: vi.fn(),
   failed: vi.fn(),
+  romanize: vi.fn(),
   events: [] as string[],
 }));
 
-vi.mock("../env.js", () => ({ env: { WORKER_TMP_DIR: "/tmp/karaoke-test" } }));
+vi.mock("../env.js", () => ({ env: { WORKER_TMP_DIR: "/tmp/karaoke-test", LYRICS_ROMAJI_ENABLED: true } }));
 vi.mock("../db.js", () => ({ pool: { query: m.query }, notify: m.notify }));
 vi.mock("../steps/download.js", () => ({ downloadYouTubeAudio: m.download }));
 vi.mock("../steps/separate.js", () => ({ separateVocals: m.separate, prewarmSeparation: m.prewarm }));
@@ -30,6 +31,7 @@ vi.mock("../steps/timedLyrics.js", async (importOriginal) => ({
   transcriptionEnabled: m.transcriptionOn,
 }));
 vi.mock("../storage/index.js", () => ({ uploadStem: m.upload }));
+vi.mock("../steps/romanizer.js", () => ({ runRomanizer: m.romanize }));
 vi.mock("../queueState.js", () => ({ markSongReady: m.ready, markSongFailed: m.failed }));
 
 import { processingSongIds, processSong } from "./processSong.js";
@@ -85,7 +87,19 @@ beforeEach(() => {
   });
   m.upload.mockImplementation(async (kind: string) => `${kind}/s1.mp3`);
   m.ready.mockImplementation(async () => void m.events.push("ready"));
+  m.romanize.mockImplementation(async (lines: string[]) => {
+    m.events.push("romaji done");
+    return { lines: lines.map((line) => (line === "夢をみた" ? "yume o mita" : line)), failed: 0 };
+  });
 });
+
+function savedLyrics(): unknown[] {
+  const call = m.query.mock.calls.find(([sql]) => String(sql).includes('"lyricsMissReason" = $5'));
+  return call ? call[1].slice(1, 4) : [];
+}
+
+const JAPANESE_PLAIN: LyricsResult = { ...MISS, plainLyrics: "夢をみた", source: "lrclib_plain", missReason: null };
+const JAPANESE_ALIGNED: LyricsResult = { ...JAPANESE_PLAIN, syncedLyrics: "[00:03.20]夢をみた", source: "aligned" };
 
 describe("processSong", () => {
   it("looks lyrics up while downloading and marks the song ready only after timed lyrics finish", async () => {
@@ -162,6 +176,35 @@ describe("processSong", () => {
     }
     expect(m.separate).not.toHaveBeenCalled();
     expect(m.failed).toHaveBeenCalledWith("s1", "yt-dlp exited with code 1");
+  });
+
+  it("aligns Japanese lyrics in their script, then saves them as romaji with the source kept", async () => {
+    m.fetchLyrics.mockResolvedValueOnce(JAPANESE_PLAIN);
+    m.addTimed.mockImplementationOnce(async () => {
+      m.events.push("timed done");
+      return JAPANESE_ALIGNED;
+    });
+    await processSong({ songId: "s1" }, helpers());
+    expect(m.addTimed.mock.calls[0][1]).toEqual(JAPANESE_PLAIN);
+    expect(m.romanize).toHaveBeenCalledWith(["夢をみた", "夢をみた"]);
+    expect(savedLyrics()).toEqual(["[00:03.20]yume o mita", "yume o mita", "aligned"]);
+    expect(m.events.slice(-3)).toEqual(["timed done", "romaji done", "ready"]);
+  });
+
+  it("does not run the romanizer for songs without kana", async () => {
+    await processSong({ songId: "s1" }, helpers());
+    expect(m.romanize).not.toHaveBeenCalled();
+    expect(savedLyrics()).toEqual(["[00:01.00]x", null, "whisper"]);
+  });
+
+  it("saves the Japanese lyrics and still marks the song ready when romanization fails", async () => {
+    m.fetchLyrics.mockResolvedValueOnce({ ...JAPANESE_ALIGNED, source: "lrclib" });
+    m.addTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => lyrics);
+    m.romanize.mockRejectedValueOnce(new Error("romanize.py exited with code 1"));
+    await processSong({ songId: "s1" }, helpers());
+    expect(savedLyrics()).toEqual(["[00:03.20]夢をみた", "夢をみた", "lrclib"]);
+    expect(m.ready).toHaveBeenCalledOnce();
+    expect(m.failed).not.toHaveBeenCalled();
   });
 
   it("does not run two jobs for the same song at once", async () => {

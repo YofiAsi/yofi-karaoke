@@ -45,6 +45,10 @@ const EnvSchema = z
       .transform((v) => v === "true"),
     TAB4U_TIMEOUT_MS: z.coerce.number().int().positive().default(8_000),
     TAB4U_MIN_INTERVAL_MS: z.coerce.number().int().nonnegative().default(2_000),
+    LYRICS_ROMAJI_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
     TRANSCRIBE_BACKEND: z.enum(["cuda", "none"]).default("none"),
     WHISPER_MODEL_DIR: z.string().min(1).optional(),
     TRANSCRIBE_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
