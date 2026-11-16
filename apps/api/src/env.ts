@@ -28,6 +28,7 @@ const RawEnvSchema = z.object({
   SESSION_SECRET: z.string().min(1).optional(),
   YTDLP_BIN: z.string().default("yt-dlp"),
   YTDLP_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+  YTDLP_JS_RUNTIMES: z.string().min(1).optional(),
   COOKIE_NAME: z.string().default("karaoke_uid"),
   CORS_ORIGIN: z.string().optional(),
   MAX_ACTIVE_ITEMS_PER_USER: z.coerce.number().int().positive().default(5),

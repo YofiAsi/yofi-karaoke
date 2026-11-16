@@ -57,9 +57,13 @@ function nonEmpty(value: string | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+export function withJsRuntimes(args: string[], jsRuntimes?: string): string[] {
+  return jsRuntimes ? ["--js-runtimes", jsRuntimes, ...args] : args;
+}
+
 function runYtdlp(args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(env.YTDLP_BIN, args, {
+    const child = spawn(env.YTDLP_BIN, withJsRuntimes(args, env.YTDLP_JS_RUNTIMES), {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
