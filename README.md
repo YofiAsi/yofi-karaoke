@@ -81,7 +81,7 @@ The worker now stores two stems per song: `instrumentals/<songId>.mp3` and `voca
 
 **The migration `20261117000000_vocals_and_reset` deletes every song on deploy.** It removes all `Song`, `QueueItem` and `ProcessingJob` rows and resets playback, because songs processed earlier have no vocals stem. It runs automatically with `prisma migrate deploy` when the api container starts, so back up Postgres first if you want to keep the old library.
 
-The migration does not touch MinIO. After the deploy, delete the orphaned stem objects by hand from the api container:
+The migration does not touch MinIO. After the deploy, delete the orphaned stem objects by hand from the api container, first as a dry run:
 
 ```bash
 docker compose exec api pnpm purge:objects
@@ -91,7 +91,7 @@ docker compose exec api pnpm purge:objects
 docker compose exec api pnpm purge:objects --yes
 ```
 
-Without `--yes` the script only prints how many objects it found under `instrumentals/` and `vocals/`; with `--yes` it deletes them and prints the count. Locally the same script is `corepack pnpm --filter api purge:objects --yes` (it reads the root `.env`). Nothing runs it automatically. Run it right after the deploy, before anyone queues a song, because it also deletes stems the new worker has already produced.
+Without `--yes` the script is a dry run: it lists the objects under `instrumentals/` and `vocals/` and prints how many are referenced by a `Song` row, how many are newer than one hour, and how many are unreferenced. With `--yes` it deletes only the unreferenced objects older than one hour and prints the deleted and kept counts, so stems of songs processed after the deploy are safe, including one being uploaded right now. Locally the same script is `corepack pnpm --filter api purge:objects --yes` (it reads the root `.env`). Nothing runs it automatically, and it is safe to run again later.
 
 ## CI
 
