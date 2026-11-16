@@ -50,7 +50,7 @@ function postUser(app: FastifyInstance, payload: Record<string, string>) {
 describe("POST /api/users host claim", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    hostPinLimiter.reset("127.0.0.1");
+    hostPinLimiter.clear();
     mockPrisma.$executeRawUnsafe.mockResolvedValue(undefined);
     mockClaim.mockResolvedValue({ kind: "already_host", userId: HOST_ID, userName: "Host" });
   });
