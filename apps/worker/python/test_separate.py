@@ -1,9 +1,9 @@
-"""Unit tests for the stem picker in separate.py. Run: python -m unittest discover -s apps/worker/python"""
+"""Unit tests for the stem picker in separation.py. Run: python -m unittest discover -s apps/worker/python"""
 
 import unittest
 from pathlib import Path
 
-from separate import StemPickError, pick_stems
+from separation import StemPickError, pick_stems
 
 OUT = Path("/out")
 MODEL = "UVR-MDX-NET-Inst_HQ_3"
