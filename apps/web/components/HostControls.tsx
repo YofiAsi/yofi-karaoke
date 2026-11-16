@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { PlaybackStateView } from "@karaoke/shared";
 import { api } from "@/lib/api";
+import { PasteLyricsPanel } from "@/components/PasteLyricsPanel";
 
 interface HostControlsProps {
   isHost: boolean;
@@ -172,6 +173,8 @@ export function HostControls({
           </button>
         </div>
       )}
+
+      {currentSongId && <PasteLyricsPanel songId={currentSongId} />}
     </div>
   );
 }
