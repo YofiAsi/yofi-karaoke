@@ -10,6 +10,7 @@ import type {
   PlaybackTickEvent,
 } from "@karaoke/shared";
 import { api } from "@/lib/api";
+import { nameUrlFor } from "@/lib/returnPath";
 import { loadStoredUser, validateStoredUser } from "@/lib/user";
 import { isCurrentHost, isPlayerDevice } from "@/lib/roles";
 import { withTick } from "@/lib/playbackTick";
@@ -58,7 +59,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
 
   useEffect(() => {
     if (!user) {
-      router.replace("/name");
+      router.replace(nameUrlFor(window.location.pathname));
     }
   }, [user, router]);
 
