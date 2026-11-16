@@ -46,6 +46,10 @@ export async function saveLyrics(songId: string, lyrics: LyricsResult, wordTimin
   );
 }
 
+export function keepsStoredTimings(lyrics: LyricsResult, wordTimings: LyricsWordTimings | null, stored: StoredLyrics): boolean {
+  return wordTimings === null && lyrics.syncedLyrics !== null && lyrics.syncedLyrics === stored.lyricsLrc;
+}
+
 async function saveLyricsIfUnchanged(
   songId: string,
   lyrics: LyricsResult,
@@ -58,7 +62,7 @@ async function saveLyricsIfUnchanged(
             "lyricsPlain" = $3,
             "lyricsSource" = $4,
             "lyricsMissReason" = $5,
-            "lyricsWordTimings" = $8::jsonb
+            "lyricsWordTimings" = CASE WHEN $9::boolean THEN "lyricsWordTimings" ELSE $8::jsonb END
       WHERE id = $1
         AND "lyricsLrc" IS NOT DISTINCT FROM $6
         AND "lyricsPlain" IS NOT DISTINCT FROM $7`,
@@ -71,6 +75,7 @@ async function saveLyricsIfUnchanged(
       stored.lyricsLrc,
       stored.lyricsPlain,
       wordTimingsParam(lyrics, wordTimings),
+      keepsStoredTimings(lyrics, wordTimings, stored),
     ],
   );
   return (rowCount ?? 0) > 0;
@@ -170,6 +175,19 @@ async function refreshStored(
   }
 }
 
+async function refreshStoredSafely(
+  songId: string,
+  stored: StoredLyricsRow,
+  words: TimedLyrics["words"],
+  log: LyricsLogger,
+): Promise<void> {
+  try {
+    await refreshStored(songId, stored, words, log);
+  } catch (err) {
+    log(`stored lyrics left as they were after an error: ${err instanceof Error ? err.message.slice(0, 300) : String(err)}`);
+  }
+}
+
 async function refetchLocked(songId: string, helpers: JobHelpers): Promise<void> {
   const log: LyricsLogger = (msg) => helpers.logger.info(`refetchLyrics ${songId} ${msg}`);
 
@@ -180,13 +198,13 @@ async function refetchLocked(songId: string, helpers: JobHelpers): Promise<void>
   }
   const looked = await freshLyrics(stored, log);
   if (decideRefetch(stored, looked) === "retry") {
-    await refreshStored(songId, stored, null, log);
+    await refreshStoredSafely(songId, stored, null, log);
     throw new Error(`lyrics refetch for ${songId} hit a transient failure (${looked.missReason}); retrying later`);
   }
   const timed = await withTranscript(stored, looked, log, refetchPriority(helpers.job));
   if (decideRefetch(stored, timed.lyrics) === "keep") {
     log(`kept stored lyrics; new result (${timed.lyrics.source}) is worse`);
-    await refreshStored(songId, stored, timed.words, log);
+    await refreshStoredSafely(songId, stored, timed.words, log);
     return;
   }
   const romanized = await romanizeLyrics(timed.lyrics, log);

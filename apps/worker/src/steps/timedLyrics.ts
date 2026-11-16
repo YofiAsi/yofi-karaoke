@@ -7,6 +7,7 @@ import { buildLines } from "../lyrics/lineBuilder.js";
 import { buildWordTimings } from "../lyrics/wordTimings.js";
 import { toLrc, type TranscriptWord } from "../lyrics/tokens.js";
 import type { LyricsLogger, LyricsResult, LyricsSource } from "./lyrics.js";
+import { needsRomaji } from "./romaji.js";
 import { languageHint, transcribeVocals } from "./transcribe.js";
 
 export type TimedLyricsPlan = "transcribe" | "align" | "words";
@@ -77,6 +78,16 @@ export function untimed(lyrics: LyricsResult): TimedLyrics {
   return { lyrics, words: null };
 }
 
+export function transcribeTimeoutMs(plan: TimedLyricsPlan): number {
+  return plan === "words" ? env.WORD_TIMINGS_TIMEOUT_MS : env.TRANSCRIBE_TIMEOUT_MS;
+}
+
+function skipReason(lyrics: LyricsResult, plan: TimedLyricsPlan, vocalsPath: string | null): string | null {
+  if (!vocalsPath) return "timed lyrics skipped: no vocals stem";
+  if (plan === "words" && needsRomaji(lyrics)) return "word timings skipped: the lyrics will be romanized";
+  return null;
+}
+
 export async function addTimedLyrics(
   song: SongNames,
   lyrics: LyricsResult,
@@ -85,12 +96,14 @@ export async function addTimedLyrics(
   priority: GpuPriority,
 ): Promise<TimedLyrics> {
   if (!transcriptionEnabled()) return untimed(lyrics);
-  if (!vocalsPath) {
-    log("timed lyrics skipped: no vocals stem");
+  const plan = planTimedLyrics(lyrics);
+  const skip = skipReason(lyrics, plan, vocalsPath);
+  if (skip || !vocalsPath) {
+    log(skip ?? "timed lyrics skipped");
     return untimed(lyrics);
   }
   try {
-    const transcript = await transcribeVocals(vocalsPath, languageHint(song.title, song.track), priority);
+    const transcript = await transcribeVocals(vocalsPath, languageHint(song.title, song.track), priority, transcribeTimeoutMs(plan));
     log(`transcribed ${transcript.words.length} words language=${transcript.language} device=${transcript.device} in ${transcript.wallMs}ms after ${transcript.queuedMs}ms in the GPU lane`);
     return { lyrics: applyTranscript(lyrics, transcript.words, log), words: transcript.words };
   } catch (err) {

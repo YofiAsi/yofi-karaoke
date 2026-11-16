@@ -4,7 +4,7 @@ import type { TranscriptWord } from "../lyrics/tokens.js";
 
 const { mockTranscribe, mockEnv } = vi.hoisted(() => ({
   mockTranscribe: vi.fn(),
-  mockEnv: { TRANSCRIBE_BACKEND: "cuda" },
+  mockEnv: { TRANSCRIBE_BACKEND: "cuda", TRANSCRIBE_TIMEOUT_MS: 180_000, WORD_TIMINGS_TIMEOUT_MS: 30_000, LYRICS_ROMAJI_ENABLED: true },
 }));
 
 vi.mock("../env.js", () => ({ env: mockEnv }));
@@ -116,7 +116,31 @@ describe("addTimedLyrics", () => {
   it("passes a Hebrew hint for Hebrew titles", async () => {
     mockTranscribe.mockResolvedValueOnce({ language: "he", device: "cuda", words: heard, wallMs: 1, queuedMs: 0 });
     await addTimedLyrics({ title: "נופיה - פרח" }, none, "/v.mp3", log, lane);
-    expect(mockTranscribe).toHaveBeenCalledWith("/v.mp3", "he", lane);
+    expect(mockTranscribe).toHaveBeenCalledWith("/v.mp3", "he", lane, 180_000);
+  });
+
+  it("gives the words only transcription of synced lyrics the shorter timeout", async () => {
+    mockTranscribe.mockResolvedValueOnce({ language: "en", device: "cuda", words: heard, wallMs: 1, queuedMs: 0 });
+    await addTimedLyrics({ title: "t" }, synced, "/v.mp3", log, lane);
+    expect(mockTranscribe).toHaveBeenCalledWith("/v.mp3", "auto", lane, 30_000);
+  });
+
+  it("keeps synced lyrics without word timings when the words only transcription times out", async () => {
+    mockTranscribe.mockRejectedValueOnce(new Error("transcribe timed out after 30000ms in gpu sidecar"));
+    expect(await addTimedLyrics({ title: "t" }, synced, "/v.mp3", log, lane)).toEqual({ lyrics: synced, words: null });
+  });
+
+  it("skips the words only transcription for lyrics that will be romanized", async () => {
+    const japanese: LyricsResult = { ...synced, syncedLyrics: "[00:01.00]夢をみた", plainLyrics: "夢をみた" };
+    expect(await addTimedLyrics({ title: "t" }, japanese, "/v.mp3", log, lane)).toEqual({ lyrics: japanese, words: null });
+    expect(mockTranscribe).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("romanized"));
+  });
+
+  it("still aligns Japanese plain lyrics before romanization", async () => {
+    mockTranscribe.mockResolvedValueOnce({ language: "ja", device: "cuda", words: heard, wallMs: 1, queuedMs: 0 });
+    await addTimedLyrics({ title: "t" }, { ...plain, plainLyrics: "夢をみた" }, "/v.mp3", log, lane);
+    expect(mockTranscribe).toHaveBeenCalledWith("/v.mp3", "auto", lane, 180_000);
   });
 
   it("keeps existing lyrics when transcription fails", async () => {

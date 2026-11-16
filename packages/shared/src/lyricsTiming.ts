@@ -3,12 +3,13 @@ import { z } from "zod";
 
 export const MAX_TIMED_LINES = 2000;
 export const MAX_TIMED_WORDS_PER_LINE = 200;
+export const MAX_TIMED_WORD_CHARS = 200;
 
 const SecondsSchema = z.number().finite().nonnegative();
 
 export const TimedWordSchema = z
   .object({
-    text: z.string().min(1).max(200),
+    text: z.string().min(1).max(MAX_TIMED_WORD_CHARS),
     start: SecondsSchema,
     end: SecondsSchema,
   })

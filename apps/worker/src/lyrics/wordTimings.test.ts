@@ -132,3 +132,41 @@ describe("span helpers", () => {
     expect(settled[2].end).toBe(15);
   });
 });
+
+describe("review cases", () => {
+  it("does not reuse a token the previous line matched at a shared boundary", () => {
+    const lrc = "[00:10.00]run run\n[00:11.00]run away\n[00:15.00]x";
+    const heard = [
+      { text: " run", start: 10.1, end: 10.4, probability: 0.9 },
+      { text: " run", start: 10.6, end: 10.9, probability: 0.9 },
+      { text: " run", start: 11.3, end: 11.6, probability: 0.9 },
+      { text: " away", start: 11.7, end: 12.2, probability: 0.9 },
+    ];
+    const timings = buildWordTimings(lrc, heard)!;
+    expect(timings[0].words.map((w) => w.start)).toEqual([10.1, 10.6]);
+    expect(timings[1].words[0]).toEqual({ text: "run", start: 11.3, end: 11.6 });
+  });
+
+  it("ignores words without letters when deciding whether a line is usable", () => {
+    const lrc = "[00:10.00]♪ ♪ paper ♪\n[00:14.00]x";
+    const [line] = buildWordTimings(lrc, sung("paper", 11))!;
+    expect(line.words.map((w) => w.text)).toEqual(["♪", "♪", "paper", "♪"]);
+    expect(line.words[2].start).toBeCloseTo(11);
+    expectWellFormed([line], [10, 14]);
+  });
+
+  it("leaves an oversize line untimed instead of dropping the whole song", () => {
+    const long = "あ".repeat(210);
+    const lrc = `[00:05.00]${long}\n[00:10.00]paper boats`;
+    const timings = buildWordTimings(lrc, [{ text: long.slice(0, 20), start: 5.1, end: 6, probability: 0.9 }, ...sung("paper boats", 10.2)])!;
+    expect(timings[0].words).toEqual([]);
+    expect(timings[1].words).toHaveLength(2);
+  });
+
+  it("leaves a line with more words than the stored limit untimed", () => {
+    const many = Array.from({ length: 201 }, () => "la").join(" ");
+    const timings = buildWordTimings(`[00:05.00]${many}\n[00:30.00]paper boats`, [...sung(many, 5, 0.1), ...sung("paper boats", 30.2)])!;
+    expect(timings[0].words).toEqual([]);
+    expect(timings[1].words).toHaveLength(2);
+  });
+});

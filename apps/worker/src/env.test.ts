@@ -31,6 +31,13 @@ describe("worker env", () => {
     expect(env.GPU_SIDECAR_PY_PATH.split(path.sep).join("/")).toMatch(/apps\/worker\/python\/gpu_sidecar\.py$/);
   });
 
+  it("limits the words only transcription to 30 s by default and validates WORD_TIMINGS_TIMEOUT_MS", () => {
+    const base = { ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x" };
+    expect(parseEnv(base).WORD_TIMINGS_TIMEOUT_MS).toBe(30_000);
+    expect(parseEnv({ ...base, WORD_TIMINGS_TIMEOUT_MS: "15000" }).WORD_TIMINGS_TIMEOUT_MS).toBe(15_000);
+    for (const bad of ["0", "999", "600001", "soon"]) expect(() => parseEnv({ ...base, WORD_TIMINGS_TIMEOUT_MS: bad })).toThrow();
+  });
+
   it("runs four jobs at once by default and validates WORKER_CONCURRENCY", () => {
     const base = { ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x" };
     expect(parseEnv(base).WORKER_CONCURRENCY).toBe(4);
