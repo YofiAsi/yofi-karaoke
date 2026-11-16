@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect } from "react";
 import type { QueueItem, SongProgressEvent, User } from "@karaoke/shared";
 import { QueueList } from "./QueueList";
@@ -51,6 +52,14 @@ export function QueueDrawer({
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold">Up next</h2>
+          {isHost && (
+            <Link
+              href="/tv"
+              className="ms-auto me-2 text-sm text-neutral-300 px-2 py-1 rounded-lg hover:bg-neutral-800"
+            >
+              Open TV screen
+            </Link>
+          )}
           <button
             onClick={onClose}
             className="text-neutral-400 text-sm px-2 py-1 rounded-lg hover:bg-neutral-800"
