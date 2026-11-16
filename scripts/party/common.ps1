@@ -127,7 +127,7 @@ function Read-ProcessList($Paths) {
 function Test-SameProcess($Entry) {
     $process = Get-Process -Id $Entry.pid -ErrorAction SilentlyContinue
     if (-not $process) { return $false }
-    return $process.StartTime.ToUniversalTime().ToString("o") -eq $Entry.started
+    return [long]$process.StartTime.ToUniversalTime().Ticks -eq [long]$Entry.started
 }
 
 function Stop-PrivatePostgres($Paths, [string]$PgBin) {

@@ -190,7 +190,7 @@ function Start-Child([string]$Name, [string]$Exe, [string[]]$Arguments, [string]
     $err = Join-Path $script:RunLogs "$Name.err.log"
     $process = Start-Process -FilePath $Exe -ArgumentList $Arguments -WorkingDirectory $WorkDir `
         -RedirectStandardOutput $out -RedirectStandardError $err -WindowStyle Hidden -PassThru
-    $started = $process.StartTime.ToUniversalTime().ToString("o")
+    $started = $process.StartTime.ToUniversalTime().Ticks
     [void]$script:Children.Add([pscustomobject]@{ name = $Name; pid = $process.Id; started = $started; process = $process; log = $out; err = $err })
     Save-ProcessList
     return $process
