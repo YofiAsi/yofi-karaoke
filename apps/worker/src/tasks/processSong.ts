@@ -1,4 +1,4 @@
-import type { Task } from "graphile-worker";
+import type { JobHelpers, Task } from "graphile-worker";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { pool, notify } from "../db.js";
@@ -6,7 +6,9 @@ import { env } from "../env.js";
 import { downloadYouTubeAudio } from "../steps/download.js";
 import { separateVocals } from "../steps/separate.js";
 import { fetchLyrics } from "../steps/lyrics.js";
-import { uploadInstrumental } from "../minioUpload.js";
+import { uploadStem } from "../minioUpload.js";
+import { markSongFailed, markSongReady } from "../queueState.js";
+import { decideFailure, type FailureDecision } from "./failurePolicy.js";
 import { saveLyrics } from "./refetchLyrics.js";
 import {
   PgNotifyChannels,
@@ -62,32 +64,6 @@ async function broadcastQueueUpdated(): Promise<void> {
   await notify(PgNotifyChannels.queueUpdated, { reason: "process_song" });
 }
 
-async function markQueueItemsFailed(songId: string, message: string): Promise<void> {
-  await pool.query(
-    `UPDATE "QueueItem"
-       SET "state" = 'failed'::"QueueState"
-     WHERE "songId" = $1 AND "state" IN ('queued','processing')`,
-    [songId],
-  );
-  await pool.query(
-    `UPDATE "ProcessingJob"
-       SET "step" = 'error'::"ProcessingStep",
-           "errorMessage" = $2,
-           "completedAt" = NOW()
-     WHERE "songId" = $1 AND "completedAt" IS NULL`,
-    [songId, message],
-  );
-}
-
-async function markQueueItemsReady(songId: string): Promise<void> {
-  await pool.query(
-    `UPDATE "QueueItem"
-       SET "state" = 'ready'::"QueueState"
-     WHERE "songId" = $1 AND "state" IN ('queued','processing')`,
-    [songId],
-  );
-}
-
 interface SongRow {
   id: string;
   youtubeVideoId: string;
@@ -98,14 +74,77 @@ interface SongRow {
   durationSeconds: number;
 }
 
-async function loadSong(songId: string): Promise<SongRow> {
+async function loadSong(songId: string): Promise<SongRow | null> {
   const { rows } = await pool.query<SongRow>(
     `SELECT id, "youtubeVideoId", title, artist, track, "trackArtist", "durationSeconds"
      FROM "Song" WHERE id = $1`,
     [songId],
   );
-  if (rows.length === 0) throw new Error(`song ${songId} not found`);
-  return rows[0];
+  return rows[0] ?? null;
+}
+
+async function uploadStems(
+  songId: string,
+  stems: { instrumentalPath: string; vocalsPath: string | null },
+): Promise<{ instrumentalKey: string; vocalsKey: string | null }> {
+  const instrumentalKey = await uploadStem("instrumental", songId, stems.instrumentalPath);
+  const vocalsKey = stems.vocalsPath ? await uploadStem("vocals", songId, stems.vocalsPath) : null;
+  return { instrumentalKey, vocalsKey };
+}
+
+async function runPipeline(songId: string, workDir: string, helpers: JobHelpers): Promise<void> {
+  const song = await loadSong(songId);
+  if (!song) {
+    helpers.logger.warn(`processSong ${songId} skipped: song no longer exists`);
+    return;
+  }
+
+  await reportProgress(songId, "downloading", 5);
+  const { filePath } = await downloadYouTubeAudio(song.youtubeVideoId, workDir);
+
+  await reportProgress(songId, "separating", 35);
+  const stems = await separateVocals(workDir, filePath);
+  helpers.logger.info(`separate.py wall=${stems.wallMs}ms vocals=${stems.vocalsPath !== null}`);
+
+  await reportProgress(songId, "fetching_lyrics", 80);
+  const lyrics = await fetchLyrics(song, (msg) => helpers.logger.info(`processSong ${songId} ${msg}`));
+
+  const { instrumentalKey, vocalsKey } = await uploadStems(songId, stems);
+
+  await saveLyrics(songId, lyrics);
+  await pool.query(
+    `UPDATE "Song" SET "instrumentalObjectKey" = $2, "vocalsObjectKey" = $3 WHERE id = $1`,
+    [songId, instrumentalKey, vocalsKey],
+  );
+
+  await markSongReady(songId);
+  await reportProgress(songId, "done", 100);
+  await broadcastQueueUpdated();
+}
+
+async function reportRetry(songId: string, message: string, helpers: JobHelpers): Promise<void> {
+  const { attempts, max_attempts } = helpers.job;
+  await reportProgress(songId, "pending", 0, `attempt ${attempts}/${max_attempts} failed, retrying: ${message}`);
+}
+
+async function reportFinalFailure(songId: string, message: string): Promise<void> {
+  await markSongFailed(songId, message);
+  await reportProgress(songId, "error", 0, message);
+  await broadcastQueueUpdated();
+}
+
+async function handleFailure(songId: string, message: string, helpers: JobHelpers): Promise<FailureDecision> {
+  const decision = decideFailure(message, {
+    attempts: helpers.job.attempts,
+    maxAttempts: helpers.job.max_attempts,
+  });
+  helpers.logger.error(`processSong ${songId} failed (${decision}): ${message}`);
+  if (decision === "retry") {
+    await reportRetry(songId, message, helpers);
+  } else {
+    await reportFinalFailure(songId, message);
+  }
+  return decision;
 }
 
 export const processSong: Task = async (payload, helpers) => {
@@ -113,39 +152,14 @@ export const processSong: Task = async (payload, helpers) => {
   if (!songId) throw new Error("songId missing from payload");
 
   const workDir = path.join(env.WORKER_TMP_DIR, songId);
-  helpers.logger.info(`processSong ${songId} start`);
+  helpers.logger.info(`processSong ${songId} start attempt ${helpers.job.attempts}/${helpers.job.max_attempts}`);
 
   try {
-    const song = await loadSong(songId);
-
-    await reportProgress(songId, "downloading", 5);
-    const { filePath } = await downloadYouTubeAudio(song.youtubeVideoId);
-
-    await reportProgress(songId, "separating", 35);
-    const { instrumentalPath, wallMs } = await separateVocals(songId, filePath);
-    helpers.logger.info(`separate.py wall=${wallMs}ms`);
-
-    await reportProgress(songId, "fetching_lyrics", 80);
-    const lyrics = await fetchLyrics(song, (msg) => helpers.logger.info(`processSong ${songId} ${msg}`));
-
-    const instrumentalKey = await uploadInstrumental(songId, instrumentalPath);
-
-    await saveLyrics(songId, lyrics);
-    await pool.query(
-      `UPDATE "Song" SET "instrumentalObjectKey" = $2 WHERE id = $1`,
-      [songId, instrumentalKey],
-    );
-
-    await markQueueItemsReady(songId);
-    await reportProgress(songId, "done", 100);
-    await broadcastQueueUpdated();
+    await runPipeline(songId, workDir, helpers);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    helpers.logger.error(`processSong ${songId} failed: ${message}`);
-    await markQueueItemsFailed(songId, message);
-    await reportProgress(songId, "error", 0, message);
-    await broadcastQueueUpdated();
-    throw err;
+    const decision = await handleFailure(songId, message, helpers);
+    if (decision !== "unavailable") throw err;
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => void 0);
   }

@@ -8,6 +8,13 @@ import {
 } from "@aws-sdk/client-s3";
 import { env } from "./env.js";
 
+export type StemKind = "instrumental" | "vocals";
+
+const STEM_PREFIXES: Record<StemKind, string> = {
+  instrumental: "instrumentals",
+  vocals: "vocals",
+};
+
 const s3 = new S3Client({
   region: env.MINIO_REGION,
   endpoint: `${env.MINIO_USE_SSL ? "https" : "http"}://${env.MINIO_ENDPOINT}`,
@@ -29,12 +36,17 @@ async function ensureBucket(): Promise<void> {
   bucketEnsured = true;
 }
 
-export async function uploadInstrumental(
+export function stemObjectKey(kind: StemKind, songId: string): string {
+  return `${STEM_PREFIXES[kind]}/${songId}.mp3`;
+}
+
+export async function uploadStem(
+  kind: StemKind,
   songId: string,
   filePath: string,
 ): Promise<string> {
   await ensureBucket();
-  const key = `instrumentals/${songId}.mp3`;
+  const key = stemObjectKey(kind, songId);
   const { size } = await stat(filePath);
   await s3.send(
     new PutObjectCommand({

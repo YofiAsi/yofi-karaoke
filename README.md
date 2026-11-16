@@ -75,6 +75,24 @@ See [`docs/phase-4-dokploy-smoke.md`](docs/phase-4-dokploy-smoke.md) for a post-
 - **Shutdown:** node receives SIGTERM directly (exec form commands plus `init: true`). The worker has `stop_grace_period: 6m`: on redeploy it stops taking jobs and finishes the song it is processing before the container exits.
 - **Health:** the worker is healthy when its node process is running and Postgres answers a query; MinIO is checked with `mc ready local`; api and worker start only after Postgres and MinIO are healthy.
 
+## Vocals stem release (destructive)
+
+The worker now stores two stems per song: `instrumentals/<songId>.mp3` and `vocals/<songId>.mp3`, both encoded once at `STEM_BITRATE` (worker env, default `192k`). yt-dlp extracts the source audio to wav first, so there is only one lossy encode.
+
+**The migration `20261117000000_vocals_and_reset` deletes every song on deploy.** It removes all `Song`, `QueueItem` and `ProcessingJob` rows and resets playback, because songs processed earlier have no vocals stem. It runs automatically with `prisma migrate deploy` when the api container starts, so back up Postgres first if you want to keep the old library.
+
+The migration does not touch MinIO. After the deploy, delete the orphaned stem objects by hand from the api container:
+
+```bash
+docker compose exec api pnpm purge:objects
+```
+
+```bash
+docker compose exec api pnpm purge:objects --yes
+```
+
+Without `--yes` the script only prints how many objects it found under `instrumentals/` and `vocals/`; with `--yes` it deletes them and prints the count. Locally the same script is `corepack pnpm --filter api purge:objects --yes` (it reads the root `.env`). Nothing runs it automatically. Run it right after the deploy, before anyone queues a song, because it also deletes stems the new worker has already produced.
+
 ## CI
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pushes to `main` and on pull requests: frozen lockfile install, `packages/shared` build, Prisma client generation, `tsc --noEmit` for api, web and worker, and the vitest suites of api, web and worker.
@@ -85,7 +103,7 @@ See [`docs/phase-4-dokploy-smoke.md`](docs/phase-4-dokploy-smoke.md) for a post-
 - **api** (Fastify 5 + Socket.IO 4, port 4000) — REST + realtime.
 - **worker** (Node + Python + OpenVINO in production) — `graphile-worker`; vocal separation on Intel Arc via ONNX/OpenVINO.
 - **postgres** (16) — primary store + graphile-worker queue.
-- **minio** — S3-compatible object store for instrumental audio files.
+- **minio** — S3-compatible object store for the instrumental and vocals stems.
 
 The API shells out to `yt-dlp` for search and metadata lookups, so the API image installs `yt-dlp` + Python + Deno + ffmpeg alongside Node, and refreshes yt-dlp on start.
 

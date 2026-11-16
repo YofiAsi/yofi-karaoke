@@ -3,16 +3,20 @@ import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { env } from "../env.js";
 
-export interface SeparateResult {
+export interface SeparatedStems {
   instrumentalPath: string;
+  vocalsPath: string | null;
+}
+
+export interface SeparateResult extends SeparatedStems {
   wallMs: number;
 }
 
 export async function separateVocals(
-  songId: string,
+  workDir: string,
   inputAudio: string,
 ): Promise<SeparateResult> {
-  const outputDir = path.join(env.WORKER_TMP_DIR, songId, "sep");
+  const outputDir = path.join(workDir, "sep");
   await mkdir(outputDir, { recursive: true });
 
   const started = Date.now();
@@ -26,23 +30,29 @@ export async function separateVocals(
     env.AUDIO_SEP_MODEL,
     "--backend",
     env.SEPARATOR_BACKEND,
+    "--bitrate",
+    env.STEM_BITRATE,
   ]);
   const wallMs = Date.now() - started;
 
-  const lastLine = result.stdout.trim().split(/\r?\n/).pop() ?? "";
-  let parsed: { instrumentalPath?: string };
+  return { ...parseSeparateOutput(result.stdout, result.stderr), wallMs };
+}
+
+export function parseSeparateOutput(stdout: string, stderr: string): SeparatedStems {
+  const lastLine = stdout.trim().split(/\r?\n/).pop() ?? "";
+  let parsed: { instrumentalPath?: unknown; vocalsPath?: unknown };
   try {
     parsed = JSON.parse(lastLine);
-  } catch (err) {
+  } catch {
     throw new Error(
-      `separate.py did not emit JSON on last stdout line. last="${lastLine}" stderr=${result.stderr}`,
+      `separate.py did not emit JSON on last stdout line. last="${lastLine}" stderr=${stderr}`,
     );
   }
-  if (!parsed.instrumentalPath) {
+  if (typeof parsed.instrumentalPath !== "string" || !parsed.instrumentalPath) {
     throw new Error(`separate.py output missing instrumentalPath: ${lastLine}`);
   }
-
-  return { instrumentalPath: parsed.instrumentalPath, wallMs };
+  const vocalsPath = typeof parsed.vocalsPath === "string" && parsed.vocalsPath ? parsed.vocalsPath : null;
+  return { instrumentalPath: parsed.instrumentalPath, vocalsPath };
 }
 
 function runPython(

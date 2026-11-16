@@ -1,0 +1,80 @@
+import { pool } from "./db.js";
+
+const UNIQUE_VIOLATION = "23505";
+
+export async function markSongFailed(songId: string, message: string): Promise<void> {
+  await pool.query(
+    `UPDATE "QueueItem"
+       SET "state" = 'failed'::"QueueState"
+     WHERE "songId" = $1 AND "state" IN ('queued','processing')`,
+    [songId],
+  );
+  await pool.query(
+    `UPDATE "ProcessingJob"
+       SET "step" = 'error'::"ProcessingStep",
+           "errorMessage" = $2,
+           "completedAt" = NOW()
+     WHERE "songId" = $1 AND "completedAt" IS NULL`,
+    [songId, message],
+  );
+}
+
+export async function markSongReady(songId: string): Promise<void> {
+  await pool.query(
+    `UPDATE "QueueItem"
+       SET "state" = 'ready'::"QueueState"
+     WHERE "songId" = $1 AND "state" IN ('queued','processing')`,
+    [songId],
+  );
+  await restoreLatestFailedItem(songId);
+}
+
+async function restoreLatestFailedItem(songId: string): Promise<void> {
+  try {
+    await pool.query(
+      `UPDATE "QueueItem"
+         SET "state" = 'ready'::"QueueState"
+       WHERE id = (
+         SELECT q.id FROM "QueueItem" q
+          WHERE q."songId" = $1 AND q."state" = 'failed'
+            AND NOT EXISTS (
+              SELECT 1 FROM "QueueItem" a
+               WHERE a."songId" = $1 AND a."state" IN ('queued','processing','ready')
+            )
+          ORDER BY q."createdAt" DESC
+          LIMIT 1
+       )`,
+      [songId],
+    );
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+  }
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === UNIQUE_VIOLATION;
+}
+
+export async function failStaleJobs(olderThanMinutes: number, message: string): Promise<string[]> {
+  const { rows } = await pool.query<{ songId: string }>(
+    `UPDATE "ProcessingJob"
+        SET "step" = 'error'::"ProcessingStep",
+            "errorMessage" = $2,
+            "completedAt" = NOW()
+      WHERE "completedAt" IS NULL
+        AND "step" NOT IN ('done','error')
+        AND COALESCE("startedAt", 'epoch') < NOW() - make_interval(mins => $1)
+      RETURNING "songId"`,
+    [olderThanMinutes, message],
+  );
+  const songIds = [...new Set(rows.map((r) => r.songId))];
+  if (songIds.length > 0) {
+    await pool.query(
+      `UPDATE "QueueItem"
+          SET "state" = 'failed'::"QueueState"
+        WHERE "songId" = ANY($1::uuid[]) AND "state" IN ('queued','processing')`,
+      [songIds],
+    );
+  }
+  return songIds;
+}

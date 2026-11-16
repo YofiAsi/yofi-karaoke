@@ -18,6 +18,10 @@ const EnvSchema = z.object({
   WORKER_TMP_DIR: z.string().default("/tmp/karaoke"),
   SEPARATE_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
   DOWNLOAD_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  STEM_BITRATE: z
+    .string()
+    .regex(/^\d{2,3}k$/, "STEM_BITRATE must look like 192k")
+    .default("192k"),
   LRCLIB_BASE_URL: z.string().url().default("https://lrclib.net"),
   LRCLIB_TIMEOUT_MS: z.coerce.number().int().positive().default(8_000),
   LRCLIB_MIN_INTERVAL_MS: z.coerce.number().int().nonnegative().default(1_000),
