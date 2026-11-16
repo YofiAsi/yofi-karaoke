@@ -39,6 +39,8 @@ services:
       - HOST_STALE_SECONDS=30
       - PLAYER_STALE_SECONDS=20
       - SESSION_SECRET=${SESSION_SECRET}
+      - HOST_PIN=${HOST_PIN}
+      - CORS_ORIGIN
     depends_on:
       postgres:
         condition: service_healthy
