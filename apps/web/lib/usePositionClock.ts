@@ -10,12 +10,12 @@ export function usePositionClock() {
   const offsetRef = useRef<number | null>(null);
 
   const onState = useCallback((state: PlaybackStateView) => {
-    const now = Date.now();
+    const now = performance.now();
     setClock((prev) => clockFromState(prev, state, now));
   }, []);
 
   const onTick = useCallback((tick: PlaybackTickEvent) => {
-    const offset = updateClockOffset(offsetRef.current, tick.serverTimeMs, Date.now());
+    const offset = updateClockOffset(offsetRef.current, tick.serverTimeMs, performance.now());
     offsetRef.current = offset;
     setClock((prev) => clockFromTick(prev, tick, offset));
   }, []);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acceptsServerGain, vocalsValueText } from "./vocalsSlider";
+import { acceptsServerGain, vocalsUnavailableText, vocalsValueText } from "./vocalsSlider";
 
 describe("vocalsValueText", () => {
   it("names zero as muted and the rest as percent", () => {
@@ -29,5 +29,13 @@ describe("acceptsServerGain", () => {
 
   it("accepts any value once the settle window has passed", () => {
     expect(acceptsServerGain(0.3, false, { gain: 0.5, atMs: 1000 }, 2500)).toBe(true);
+  });
+});
+
+describe("vocalsUnavailableText", () => {
+  it("explains a missing or failed vocals track and stays empty otherwise", () => {
+    expect(vocalsUnavailableText(false, false)).toMatch(/no separate vocals track/);
+    expect(vocalsUnavailableText(true, true)).toMatch(/failed to load/);
+    expect(vocalsUnavailableText(true, false)).toBeNull();
   });
 });

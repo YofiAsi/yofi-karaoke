@@ -1,7 +1,8 @@
-// Estimates the playback position on devices without audio from playback state and 1 Hz ticks.
+// Estimates the playback position on devices without audio from playback state and 1 Hz ticks, on a monotonic clock.
 import type { PlaybackStateView, PlaybackTickEvent } from "@karaoke/shared";
 
 export const STATE_SNAP_SECONDS = 2;
+export const EXTRAPOLATION_LIMIT_MS = 3000;
 const OFFSET_DRIFT_ALLOWANCE_MS = 5;
 
 export interface PositionClock {
@@ -9,6 +10,7 @@ export interface PositionClock {
   positionSeconds: number;
   anchoredAtMs: number;
   isPlaying: boolean;
+  freshUntilMs: number;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -16,7 +18,8 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 export function positionAt(clock: PositionClock, nowMs: number, durationSeconds?: number): number {
-  const elapsed = clock.isPlaying ? Math.max(0, nowMs - clock.anchoredAtMs) / 1000 : 0;
+  const until = Math.min(nowMs, clock.freshUntilMs);
+  const elapsed = clock.isPlaying ? Math.max(0, until - clock.anchoredAtMs) / 1000 : 0;
   const max = durationSeconds && durationSeconds > 0 ? durationSeconds : Number.POSITIVE_INFINITY;
   return clamp(clock.positionSeconds + elapsed, 0, max);
 }
@@ -27,7 +30,13 @@ function snapTo(state: PlaybackStateView, nowMs: number): PositionClock {
     positionSeconds: state.positionSeconds,
     anchoredAtMs: nowMs,
     isPlaying: state.isPlaying,
+    freshUntilMs: nowMs + EXTRAPOLATION_LIMIT_MS,
   };
+}
+
+function freshUntilAfterState(prev: PositionClock, state: PlaybackStateView, nowMs: number): number {
+  const resumed = !prev.isPlaying && state.isPlaying;
+  return resumed ? nowMs + EXTRAPOLATION_LIMIT_MS : prev.freshUntilMs;
 }
 
 export function clockFromState(
@@ -38,7 +47,13 @@ export function clockFromState(
   if (!prev || prev.queueItemId !== state.currentQueueItemId) return snapTo(state, nowMs);
   const predicted = positionAt(prev, nowMs);
   if (Math.abs(predicted - state.positionSeconds) > STATE_SNAP_SECONDS) return snapTo(state, nowMs);
-  return { ...prev, positionSeconds: predicted, anchoredAtMs: nowMs, isPlaying: state.isPlaying };
+  return {
+    ...prev,
+    positionSeconds: predicted,
+    anchoredAtMs: nowMs,
+    isPlaying: state.isPlaying,
+    freshUntilMs: freshUntilAfterState(prev, state, nowMs),
+  };
 }
 
 export function updateClockOffset(prevOffsetMs: number | null, serverTimeMs: number, receivedAtMs: number): number {
@@ -52,5 +67,11 @@ export function clockFromTick(
   offsetMs: number,
 ): PositionClock | null {
   if (!prev || prev.queueItemId !== tick.queueItemId) return prev;
-  return { ...prev, positionSeconds: tick.positionSeconds, anchoredAtMs: tick.serverTimeMs + offsetMs };
+  const anchoredAtMs = tick.serverTimeMs + offsetMs;
+  return {
+    ...prev,
+    positionSeconds: tick.positionSeconds,
+    anchoredAtMs,
+    freshUntilMs: anchoredAtMs + EXTRAPOLATION_LIMIT_MS,
+  };
 }

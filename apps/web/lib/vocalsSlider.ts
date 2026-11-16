@@ -24,3 +24,9 @@ export function acceptsServerGain(
   if (Math.abs(serverGain - lastSend.gain) < SAME_GAIN_EPSILON) return true;
   return nowMs - lastSend.atMs > VOCALS_SETTLE_MS;
 }
+
+export function vocalsUnavailableText(hasVocals: boolean, failed: boolean): string | null {
+  if (!hasVocals) return "This song has no separate vocals track, so only the instrumental plays.";
+  if (failed) return "The vocals track failed to load on the player, so only the instrumental plays.";
+  return null;
+}

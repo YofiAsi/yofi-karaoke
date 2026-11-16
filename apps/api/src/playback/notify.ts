@@ -1,12 +1,19 @@
-// Shared pg_notify helpers and the playback state view sent to clients.
-import type { PlaybackState } from "@prisma/client";
+// Shared pg_notify helpers and the playback state view sent to clients, broadcast in commit order.
+import type { PlaybackState, Prisma } from "@prisma/client";
 import { PgNotifyChannels, type PlaybackStateView } from "@karaoke/shared";
 import { prisma } from "../db.js";
 
 export const PLAYBACK_STATE_ID = 1;
 
-export async function notify(channel: string, payload: object): Promise<void> {
-  await prisma.$executeRawUnsafe(`SELECT pg_notify($1, $2)`, channel, JSON.stringify(payload));
+type Db = Pick<Prisma.TransactionClient, "$executeRawUnsafe">;
+
+export async function notify(channel: string, payload: object, db: Db = prisma): Promise<void> {
+  await db.$executeRawUnsafe(`SELECT pg_notify($1, $2)`, channel, JSON.stringify(payload));
+}
+
+async function lockedPlaybackState(tx: Prisma.TransactionClient): Promise<PlaybackState> {
+  await tx.$queryRaw`SELECT id FROM "PlaybackState" WHERE id = ${PLAYBACK_STATE_ID} FOR UPDATE`;
+  return tx.playbackState.findUniqueOrThrow({ where: { id: PLAYBACK_STATE_ID } });
 }
 
 export function toPlaybackStateView(state: PlaybackState): PlaybackStateView {
@@ -26,7 +33,10 @@ export async function loadPlaybackStateView(): Promise<PlaybackStateView> {
 }
 
 export async function notifyPlaybackState(): Promise<void> {
-  await notify(PgNotifyChannels.playbackState, await loadPlaybackStateView());
+  await prisma.$transaction(async (tx) => {
+    const view = toPlaybackStateView(await lockedPlaybackState(tx));
+    await notify(PgNotifyChannels.playbackState, view, tx);
+  });
 }
 
 export async function notifyQueueUpdated(reason: string, details: object = {}): Promise<void> {

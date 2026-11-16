@@ -44,6 +44,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const [lyricsVersion, setLyricsVersion] = useState(0);
   const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
   const clock = usePositionClock();
+  const [failedVocalsSongId, setFailedVocalsSongId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,6 +135,10 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const displayedPlayback = withTick(playbackState, lastTick);
 
   useEffect(() => {
+    if (!isPlayer) setAudioPosition(null);
+  }, [isPlayer]);
+
+  useEffect(() => {
     if (!isHost) return;
     const id = setInterval(() => {
       api.post("/api/users/heartbeat").catch(console.error);
@@ -183,10 +188,11 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         plainLyrics,
         lyricsOffsetMs,
         setLyricsOffsetMs,
-        audioPosition,
+        audioPosition: isPlayer ? audioPosition : null,
         setAudioPosition,
         refetchQueue: fetchQueue,
         positionClock: isPlayer ? null : clock.clock,
+        failedVocalsSongId,
       }}
     >
       <PlayerToggle
@@ -195,6 +201,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         source={audioSource}
         playbackState={playbackState}
         onTick={setAudioPosition}
+        onVocalsFailed={setFailedVocalsSongId}
       />
       {children}
       <nav

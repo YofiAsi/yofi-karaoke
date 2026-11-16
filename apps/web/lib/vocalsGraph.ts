@@ -58,7 +58,12 @@ class VocalsGraph {
   }
 
   resume(): void {
-    if (this.ctx?.state === "suspended") void this.ctx.resume().catch(() => undefined);
+    if (!this.ensureContext() || !this.ctx || this.ctx.state === "running") return;
+    void this.ctx.resume().catch(() => undefined);
+  }
+
+  isRunning(): boolean {
+    return this.ctx?.state === "running";
   }
 }
 

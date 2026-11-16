@@ -24,6 +24,7 @@ export interface AppShellState {
   setAudioPosition: (pos: number) => void;
   refetchQueue: () => Promise<void>;
   positionClock?: PositionClock | null;
+  failedVocalsSongId?: string | null;
 }
 
 export const AppShellContext = createContext<AppShellState | null>(null);

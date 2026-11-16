@@ -24,6 +24,7 @@ export default function HomePage() {
     audioPosition,
     refetchQueue,
     positionClock,
+    failedVocalsSongId,
   } = useAppShell();
   const [queueOpen, setQueueOpen] = useState(false);
 
@@ -85,6 +86,7 @@ export default function HomePage() {
               key={current.id}
               queueItemId={current.id}
               hasVocals={current.song.hasVocals}
+              failed={failedVocalsSongId === current.song.id}
               serverGain={playbackState?.vocalsGain ?? 0}
             />
           )}

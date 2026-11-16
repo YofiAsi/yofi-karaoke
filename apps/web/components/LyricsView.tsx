@@ -28,7 +28,7 @@ function useClockLineIndex(
       setIndex(null);
       return;
     }
-    const update = () => setIndex(activeLineIndex(lines, positionAt(clock, Date.now(), durationSeconds), offsetMs));
+    const update = () => setIndex(activeLineIndex(lines, positionAt(clock, performance.now(), durationSeconds), offsetMs));
     update();
     if (!clock.isPlaying) return;
     let frame = requestAnimationFrame(function tick() {

@@ -17,7 +17,13 @@ const STATE: PlaybackStateView = {
   vocalsGain: 0,
 };
 
-const CLOCK: PositionClock = { queueItemId: "item-a", positionSeconds: 10, anchoredAtMs: 1000, isPlaying: true };
+const CLOCK: PositionClock = {
+  queueItemId: "item-a",
+  positionSeconds: 10,
+  anchoredAtMs: 1000,
+  isPlaying: true,
+  freshUntilMs: 4000,
+};
 
 describe("positionAt", () => {
   it("advances in real time while playing", () => {
@@ -29,7 +35,7 @@ describe("positionAt", () => {
   });
 
   it("clamps at the song duration", () => {
-    expect(positionAt(CLOCK, 1_000_000, 200)).toBe(200);
+    expect(positionAt({ ...CLOCK, freshUntilMs: Infinity }, 1_000_000, 200)).toBe(200);
   });
 
   it("never runs backwards from an anchor in the future", () => {
@@ -39,9 +45,15 @@ describe("positionAt", () => {
 
 describe("clockFromState", () => {
   it("snaps to the state on the first state and on item change", () => {
-    expect(clockFromState(null, STATE, 5000)).toEqual({ ...CLOCK, anchoredAtMs: 5000 });
+    expect(clockFromState(null, STATE, 5000)).toEqual({ ...CLOCK, anchoredAtMs: 5000, freshUntilMs: 8000 });
     const next = clockFromState(CLOCK, { ...STATE, currentQueueItemId: "item-b", positionSeconds: 0 }, 1200);
-    expect(next).toEqual({ queueItemId: "item-b", positionSeconds: 0, anchoredAtMs: 1200, isPlaying: true });
+    expect(next).toEqual({
+      queueItemId: "item-b",
+      positionSeconds: 0,
+      anchoredAtMs: 1200,
+      isPlaying: true,
+      freshUntilMs: 4200,
+    });
   });
 
   it("snaps on a host seek", () => {
@@ -79,7 +91,7 @@ describe("clockFromTick", () => {
   it("anchors the tick at its corrected send time", () => {
     const tick = { queueItemId: "item-a", positionSeconds: 20, serverTimeMs: 50_000 };
     const next = clockFromTick(CLOCK, tick, -29_960);
-    expect(next).toEqual({ ...CLOCK, positionSeconds: 20, anchoredAtMs: 20_040 });
+    expect(next).toEqual({ ...CLOCK, positionSeconds: 20, anchoredAtMs: 20_040, freshUntilMs: 23_040 });
     expect(positionAt(next!, 20_540)).toBeCloseTo(20.5);
   });
 
@@ -87,5 +99,24 @@ describe("clockFromTick", () => {
     const tick = { queueItemId: "item-old", positionSeconds: 180, serverTimeMs: 0 };
     expect(clockFromTick(CLOCK, tick, 0)).toBe(CLOCK);
     expect(clockFromTick(null, tick, 0)).toBeNull();
+  });
+});
+
+describe("extrapolation limit", () => {
+  it("stops advancing about 3 seconds after the last tick", () => {
+    expect(positionAt(CLOCK, 3500)).toBeCloseTo(12.5);
+    expect(positionAt(CLOCK, 60_000)).toBeCloseTo(13);
+  });
+
+  it("does not let a stream of unrelated states keep the clock running", () => {
+    const later = clockFromState(CLOCK, { ...STATE, positionSeconds: 12 }, 3900);
+    const muchLater = clockFromState(later, { ...STATE, positionSeconds: 12 }, 4500);
+    expect(positionAt(muchLater, 30_000)).toBeCloseTo(13);
+  });
+
+  it("starts a fresh window when playback resumes", () => {
+    const paused = { ...CLOCK, isPlaying: false };
+    const resumed = clockFromState(paused, { ...STATE, positionSeconds: 10 }, 50_000);
+    expect(positionAt(resumed, 51_000)).toBeCloseTo(11);
   });
 });
