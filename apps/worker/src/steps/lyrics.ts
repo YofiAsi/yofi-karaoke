@@ -1,4 +1,4 @@
-// Lyrics lookup: LRCLIB exact match, then LRCLIB search, then lyrics.ovh.
+// Lyrics lookup: LRCLIB exact match, then LRCLIB search, then lyrics.ovh, within one bounded run.
 import { env } from "../env.js";
 import { buildLyricsCandidates, type LyricsCandidate, type LyricsQueryInput } from "./lyricsQuery.js";
 
@@ -30,11 +30,21 @@ export interface LrclibEntry {
 
 export type LyricsLogger = (message: string) => void;
 
+export type LyricsLookupParams = LyricsQueryInput & { durationSeconds: number };
+
+export const TRANSIENT_MISS_REASONS: ReadonlySet<LyricsMissReason> = new Set([
+  "rate_limited",
+  "timeout",
+  "network_error",
+  "http_error",
+]);
+
 type FailureKind = Exclude<LyricsMissReason, "no_candidates" | "not_found">;
 
 type HttpOutcome<T> =
   | { kind: "ok"; body: T }
   | { kind: "not_found" }
+  | { kind: "skipped" }
   | { kind: FailureKind; detail: string };
 
 interface Match {
@@ -42,83 +52,91 @@ interface Match {
   query: string;
 }
 
+interface LookupRun {
+  deadlineAt: number;
+  lrclibBlockedBy: FailureKind | null;
+  failures: Set<FailureKind>;
+  log: LyricsLogger;
+}
+
 const USER_AGENT = "karaoke-worker/0.2 (self hosted party karaoke)";
 const MAX_DURATION_DELTA_SECONDS = 15;
+const LOOKUP_DEADLINE_MS = 45_000;
+const MAX_RETRY_DELAY_MS = 10_000;
 const FAILURE_PRIORITY: FailureKind[] = ["rate_limited", "timeout", "network_error", "http_error"];
+const BREAKER_FAILURES: ReadonlySet<FailureKind> = new Set(["rate_limited", "timeout", "network_error"]);
+const TRACK_ONLY_KINDS = new Set(["metadata", "split"]);
 
 let nextLrclibSlotAt = 0;
 
 export async function fetchLyrics(
-  params: LyricsQueryInput & { durationSeconds: number },
+  params: LyricsLookupParams,
   log: LyricsLogger = defaultLogger,
+  deadlineMs: number = LOOKUP_DEADLINE_MS,
 ): Promise<LyricsResult> {
-  const candidates = buildLyricsCandidates(params);
-  if (candidates.length === 0) {
-    log(`lyrics miss: no usable query from title "${params.title}"`);
-    return miss("no_candidates");
+  const run: LookupRun = { deadlineAt: Date.now() + deadlineMs, lrclibBlockedBy: null, failures: new Set(), log };
+  try {
+    return await lookupLyrics(params, run);
+  } catch (err) {
+    log(`lyrics lookup failed unexpectedly: ${errorDetail(err)}`);
+    return miss("http_error");
   }
-
-  const failures = new Set<FailureKind>();
-  const recordFailure = (outcome: HttpOutcome<unknown>, query: string) => {
-    if (outcome.kind === "ok" || outcome.kind === "not_found") return;
-    failures.add(outcome.kind);
-    log(`lyrics ${outcome.kind} for ${query}: ${outcome.detail}`);
-  };
-
-  let plainFallback: Match | null = null;
-  for (const candidate of candidates) {
-    const found = await lookupCandidate(candidate, params.durationSeconds, recordFailure);
-    if (found && hasText(found.entry.syncedLyrics)) {
-      log(`lyrics hit (synced) via ${found.query}`);
-      return hit(found, "lrclib");
-    }
-    plainFallback ??= found;
-  }
-
-  const trackOnly = await lookupTrackOnly(candidates, params, recordFailure);
-  if (trackOnly && hasText(trackOnly.entry.syncedLyrics)) {
-    log(`lyrics hit (synced) via ${trackOnly.query}`);
-    return hit(trackOnly, "lrclib");
-  }
-  plainFallback ??= trackOnly;
-
-  if (plainFallback) {
-    log(`lyrics hit (plain only) via ${plainFallback.query}`);
-    return hit(plainFallback, "lrclib_plain");
-  }
-
-  const ovhQuery = `ovh ${describe(candidates[0])}`;
-  const ovh = await fetchFromOvh(candidates[0]);
-  if (ovh.kind === "ok" && hasText(ovh.body)) {
-    log(`lyrics hit (plain only) via ${ovhQuery}`);
-    return { ...miss(null), plainLyrics: ovh.body, source: "ovh", matchedQuery: ovhQuery };
-  }
-  if (ovh.kind !== "ok") log(`lyrics ${ovh.kind} for ${ovhQuery}${"detail" in ovh ? `: ${ovh.detail}` : ""}`);
-
-  const reason = FAILURE_PRIORITY.find((kind) => failures.has(kind)) ?? "not_found";
-  log(`lyrics miss (${reason}) after ${candidates.map(describe).join("; ")}`);
-  return miss(reason);
 }
 
-export function pickBestEntry(entries: LrclibEntry[], durationSeconds: number): LrclibEntry | null {
-  const usable = entries.filter(
+export function pickBestEntry(entries: unknown, durationSeconds: number): LrclibEntry | null {
+  const usable = toEntries(entries).filter(
     (e) => !e.instrumental && (hasText(e.syncedLyrics) || hasText(e.plainLyrics)) && withinDuration(e, durationSeconds),
   );
   usable.sort((a, b) => syncedRank(a) - syncedRank(b) || durationDelta(a, durationSeconds) - durationDelta(b, durationSeconds));
   return usable[0] ?? null;
 }
 
+export function artistMatches(artistName: unknown, knownArtists: string[]): boolean {
+  const artist = normalizeName(typeof artistName === "string" ? artistName : "");
+  if (artist.length < 2) return false;
+  return knownArtists.some((raw) => {
+    const known = normalizeName(raw);
+    return known.length >= 2 && (known.includes(artist) || artist.includes(known));
+  });
+}
+
+async function lookupLyrics(params: LyricsLookupParams, run: LookupRun): Promise<LyricsResult> {
+  const candidates = buildLyricsCandidates(params);
+  if (candidates.length === 0) {
+    run.log(`lyrics miss: no usable query from title "${params.title}"`);
+    return miss("no_candidates");
+  }
+
+  let plainFallback: Match | null = null;
+  for (const candidate of candidates) {
+    const found = await lookupCandidate(candidate, params.durationSeconds, run);
+    if (found && hasText(found.entry.syncedLyrics)) return logHit(run, found, "lrclib");
+    plainFallback ??= found;
+  }
+
+  const trackOnly = await lookupTrackOnly(candidates, params, run);
+  if (trackOnly && hasText(trackOnly.entry.syncedLyrics)) return logHit(run, trackOnly, "lrclib");
+  plainFallback ??= trackOnly;
+  if (plainFallback) return logHit(run, plainFallback, "lrclib_plain");
+
+  const ovh = await lookupOvh(candidates[0], run);
+  if (ovh) return ovh;
+
+  const reason = FAILURE_PRIORITY.find((kind) => run.failures.has(kind)) ?? "not_found";
+  run.log(`lyrics miss (${reason}) after ${candidates.map(describe).join("; ")}`);
+  return miss(reason);
+}
+
 async function lookupCandidate(
   candidate: LyricsCandidate,
   durationSeconds: number,
-  recordFailure: (outcome: HttpOutcome<unknown>, query: string) => void,
+  run: LookupRun,
 ): Promise<Match | null> {
   let plain: Match | null = null;
   for (const query of lrclibQueries(candidate, durationSeconds)) {
-    const outcome = await lrclibRequest<LrclibEntry | LrclibEntry[]>(query.path, query.params);
-    recordFailure(outcome, query.label);
+    const outcome = await lrclibRequest(query.path, query.params, query.label, run);
     if (outcome.kind !== "ok") continue;
-    const entry = pickBestEntry(toArray(outcome.body), durationSeconds);
+    const entry = pickBestEntry(outcome.body, durationSeconds);
     if (!entry) continue;
     const match = { entry, query: query.label };
     if (hasText(entry.syncedLyrics)) return match;
@@ -129,17 +147,16 @@ async function lookupCandidate(
 
 async function lookupTrackOnly(
   candidates: LyricsCandidate[],
-  params: LyricsQueryInput & { durationSeconds: number },
-  recordFailure: (outcome: HttpOutcome<unknown>, query: string) => void,
+  params: LyricsLookupParams,
+  run: LookupRun,
 ): Promise<Match | null> {
-  const knownArtists = [params.artist, params.title, params.trackArtist ?? "", ...candidates.map((c) => c.artist)];
+  const knownArtists = trustedArtists(candidates, params);
   let plain: Match | null = null;
-  for (const track of distinctSplitTracks(candidates)) {
+  for (const track of trackOnlyTracks(candidates)) {
     const label = `search track="${track}" with artist check`;
-    const outcome = await lrclibRequest<LrclibEntry[]>("/api/search", { track_name: track });
-    recordFailure(outcome, label);
+    const outcome = await lrclibRequest("/api/search", { track_name: track }, label, run);
     if (outcome.kind !== "ok") continue;
-    const sameArtist = outcome.body.filter((e) => artistMatches(e.artistName, knownArtists));
+    const sameArtist = toEntries(outcome.body).filter((e) => artistMatches(e.artistName, knownArtists));
     const entry = pickBestEntry(sameArtist, params.durationSeconds);
     if (!entry) continue;
     const match = { entry, query: label };
@@ -149,22 +166,29 @@ async function lookupTrackOnly(
   return plain;
 }
 
-function distinctSplitTracks(candidates: LyricsCandidate[]): string[] {
-  const tracks = candidates.map((c) => c.track).filter((t) => !/\s[-–—]\s/.test(t));
-  return [...new Set(tracks)];
+async function lookupOvh(candidate: LyricsCandidate, run: LookupRun): Promise<LyricsResult | null> {
+  const query = `ovh ${describe(candidate)}`;
+  const remainingMs = run.deadlineAt - Date.now();
+  if (remainingMs <= 0) {
+    run.log(`lyrics skipped ${query}: lookup deadline reached`);
+    return null;
+  }
+  const outcome = await fetchFromOvh(candidate, Math.min(env.LYRICS_OVH_TIMEOUT_MS, remainingMs));
+  if (outcome.kind === "ok" && hasText(outcome.body)) {
+    run.log(`lyrics hit (plain only) via ${query}`);
+    return { ...miss(null), plainLyrics: outcome.body, source: "ovh", matchedQuery: query };
+  }
+  if ("detail" in outcome) run.log(`lyrics ${outcome.kind} for ${query}: ${outcome.detail}`);
+  return null;
 }
 
-export function artistMatches(artistName: string | null | undefined, knownArtists: string[]): boolean {
-  const artist = normalizeName(artistName ?? "");
-  if (artist.length < 2) return false;
-  return knownArtists.some((raw) => {
-    const known = normalizeName(raw);
-    return known.length >= 2 && (known.includes(artist) || artist.includes(known));
-  });
+function trustedArtists(candidates: LyricsCandidate[], params: LyricsLookupParams): string[] {
+  const candidateArtists = candidates.filter((c) => c.kind !== "swapped").map((c) => c.artist);
+  return [params.artist, params.trackArtist ?? "", ...candidateArtists];
 }
 
-function normalizeName(text: string): string {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+function trackOnlyTracks(candidates: LyricsCandidate[]): string[] {
+  return [...new Set(candidates.filter((c) => TRACK_ONLY_KINDS.has(c.kind)).map((c) => c.track))];
 }
 
 function lrclibQueries(candidate: LyricsCandidate, durationSeconds: number) {
@@ -185,28 +209,60 @@ function lrclibQueries(candidate: LyricsCandidate, durationSeconds: number) {
   ];
 }
 
-async function lrclibRequest<T>(path: string, params: Record<string, string>): Promise<HttpOutcome<T>> {
+async function lrclibRequest(
+  path: string,
+  params: Record<string, string>,
+  label: string,
+  run: LookupRun,
+): Promise<HttpOutcome<unknown>> {
   const url = new URL(path, env.LRCLIB_BASE_URL);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
 
   for (let attempt = 0; ; attempt++) {
+    if (!canQueryLrclib(run)) return { kind: "skipped" };
     await waitForLrclibSlot();
-    const response = await fetchWithTimeout(url, env.LRCLIB_TIMEOUT_MS);
-    if (!(response instanceof Response)) return response;
+    const remainingMs = run.deadlineAt - Date.now();
+    if (remainingMs <= 0) return recordOutcome(run, label, { kind: "timeout", detail: "lookup deadline reached" });
+    const response = await fetchWithTimeout(url, Math.min(env.LRCLIB_TIMEOUT_MS, remainingMs));
+    if (!(response instanceof Response)) return recordOutcome(run, label, response);
     if (response.status === 429 && attempt < env.LRCLIB_MAX_RETRIES) {
-      await sleep(retryDelayMs(response, attempt));
+      await sleep(Math.min(retryDelayMs(response, attempt), Math.max(0, run.deadlineAt - Date.now())));
       continue;
     }
-    return toOutcome<T>(response);
+    return recordOutcome(run, label, await toOutcome(response));
   }
 }
 
-async function fetchFromOvh(candidate: LyricsCandidate): Promise<HttpOutcome<string | null>> {
+function canQueryLrclib(run: LookupRun): boolean {
+  if (run.lrclibBlockedBy) return false;
+  if (Date.now() < run.deadlineAt) return true;
+  blockLrclib(run, "timeout", "lookup deadline reached");
+  return false;
+}
+
+function recordOutcome<T>(run: LookupRun, label: string, outcome: HttpOutcome<T>): HttpOutcome<T> {
+  if (!("detail" in outcome)) return outcome;
+  run.failures.add(outcome.kind);
+  run.log(`lyrics ${outcome.kind} for ${label}: ${outcome.detail}`);
+  if (BREAKER_FAILURES.has(outcome.kind)) blockLrclib(run, outcome.kind, "skipping remaining LRCLIB queries");
+  return outcome;
+}
+
+function blockLrclib(run: LookupRun, kind: FailureKind, reason: string): void {
+  if (run.lrclibBlockedBy) return;
+  run.lrclibBlockedBy = kind;
+  run.failures.add(kind);
+  run.log(`lyrics LRCLIB disabled for this lookup (${kind}): ${reason}`);
+}
+
+async function fetchFromOvh(candidate: LyricsCandidate, timeoutMs: number): Promise<HttpOutcome<string | null>> {
   const url = `https://api.lyrics.ovh/v1/${encodeURIComponent(candidate.artist)}/${encodeURIComponent(candidate.track)}`;
-  const response = await fetchWithTimeout(new URL(url), env.LYRICS_OVH_TIMEOUT_MS);
+  const response = await fetchWithTimeout(new URL(url), timeoutMs);
   if (!(response instanceof Response)) return response;
-  const outcome = await toOutcome<{ lyrics?: string }>(response);
-  return outcome.kind === "ok" ? { kind: "ok", body: outcome.body.lyrics ?? null } : outcome;
+  const outcome = await toOutcome(response);
+  if (outcome.kind !== "ok") return outcome;
+  const lyrics = isRecord(outcome.body) ? outcome.body.lyrics : null;
+  return { kind: "ok", body: typeof lyrics === "string" ? lyrics : null };
 }
 
 async function fetchWithTimeout(
@@ -227,12 +283,12 @@ async function fetchWithTimeout(
   }
 }
 
-async function toOutcome<T>(response: Response): Promise<HttpOutcome<T>> {
+async function toOutcome(response: Response): Promise<HttpOutcome<unknown>> {
   if (response.status === 404) return { kind: "not_found" };
   if (response.status === 429) return { kind: "rate_limited", detail: "HTTP 429 after retries" };
   if (!response.ok) return { kind: "http_error", detail: `HTTP ${response.status}` };
   try {
-    return { kind: "ok", body: (await response.json()) as T };
+    return { kind: "ok", body: (await response.json()) as unknown };
   } catch (err) {
     return { kind: "http_error", detail: `invalid JSON: ${errorDetail(err)}` };
   }
@@ -245,13 +301,14 @@ async function waitForLrclibSlot(): Promise<void> {
   if (waitMs > 0) await sleep(waitMs);
 }
 
-function retryDelayMs(response: Response, attempt: number): number {
+export function retryDelayMs(response: Response, attempt: number): number {
   const retryAfterSeconds = Number(response.headers.get("retry-after"));
-  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) return retryAfterSeconds * 1000;
-  return 2_000 * 2 ** attempt;
+  const requested = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 2_000 * 2 ** attempt;
+  return Math.min(requested, MAX_RETRY_DELAY_MS);
 }
 
-function hit(match: Match, source: LyricsSource): LyricsResult {
+function logHit(run: LookupRun, match: Match, source: LyricsSource): LyricsResult {
+  run.log(`lyrics hit (${source === "lrclib" ? "synced" : "plain only"}) via ${match.query}`);
   return {
     syncedLyrics: textOrNull(match.entry.syncedLyrics),
     plainLyrics: textOrNull(match.entry.plainLyrics),
@@ -263,6 +320,15 @@ function hit(match: Match, source: LyricsSource): LyricsResult {
 
 function miss(reason: LyricsMissReason | null): LyricsResult {
   return { syncedLyrics: null, plainLyrics: null, source: "none", missReason: reason, matchedQuery: null };
+}
+
+function toEntries(body: unknown): LrclibEntry[] {
+  if (Array.isArray(body)) return body.filter(isRecord) as LrclibEntry[];
+  return isRecord(body) ? [body as LrclibEntry] : [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function withinDuration(entry: LrclibEntry, durationSeconds: number): boolean {
@@ -279,16 +345,16 @@ function syncedRank(entry: LrclibEntry): number {
   return hasText(entry.syncedLyrics) ? 0 : 1;
 }
 
-function toArray<T>(value: T | T[]): T[] {
-  return Array.isArray(value) ? value : [value];
+function hasText(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
-function hasText(value: string | null | undefined): value is string {
-  return !!value?.trim();
-}
-
-function textOrNull(value: string | null | undefined): string | null {
+function textOrNull(value: unknown): string | null {
   return hasText(value) ? value : null;
+}
+
+function normalizeName(text: string): string {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
 function describe(candidate: LyricsCandidate): string {
