@@ -46,13 +46,42 @@ async function firstReadyItemId(tx: Db, excludeId: string | null): Promise<strin
   return next?.id ?? null;
 }
 
-async function lastPlayedItemId(tx: Db): Promise<string | null> {
-  const last = await tx.queueItem.findFirst({
+const REWIND_LOOKBACK = 20;
+const ACTIVE_STATES: QueueState[] = [QueueState.queued, QueueState.processing, QueueState.ready];
+
+async function recentlyPlayed(tx: Db) {
+  return tx.queueItem.findMany({
     where: { state: QueueState.played },
     orderBy: { playedAt: "desc" },
-    select: { id: true },
+    take: REWIND_LOOKBACK,
+    select: { id: true, songId: true },
   });
-  return last?.id ?? null;
+}
+
+async function activeItemForSong(tx: Db, songId: string) {
+  return tx.queueItem.findFirst({
+    where: { songId, state: { in: ACTIVE_STATES } },
+    select: { id: true, state: true },
+  });
+}
+
+async function restorePlayed(tx: Db, queueItemId: string): Promise<void> {
+  await tx.queueItem.update({
+    where: { id: queueItemId },
+    data: { state: QueueState.ready, playedAt: null },
+  });
+}
+
+async function rewindTargetId(tx: Db): Promise<string | null> {
+  for (const played of await recentlyPlayed(tx)) {
+    const active = await activeItemForSong(tx, played.songId);
+    if (!active) {
+      await restorePlayed(tx, played.id);
+      return played.id;
+    }
+    if (active.state === QueueState.ready) return active.id;
+  }
+  return null;
 }
 
 async function isReady(db: Db, queueItemId: string): Promise<boolean> {
@@ -73,12 +102,8 @@ export async function advance(expectedQueueItemId: string | null): Promise<Playb
 export async function rewind(expectedQueueItemId: string | null): Promise<PlaybackTransitionResult> {
   return prisma.$transaction(async (tx) => {
     if (!(await claimCurrent(tx, expectedQueueItemId))) return unchanged(tx);
-    const previousId = await lastPlayedItemId(tx);
+    const previousId = await rewindTargetId(tx);
     if (!previousId) return { changed: expectedQueueItemId !== null, currentQueueItemId: expectedQueueItemId };
-    await tx.queueItem.update({
-      where: { id: previousId },
-      data: { state: QueueState.ready, playedAt: null },
-    });
     await setCurrent(tx, previousId);
     return { changed: true, currentQueueItemId: previousId };
   });
@@ -96,6 +121,14 @@ export async function play(): Promise<PlaybackTransitionResult> {
   const currentId = await readCurrentId(prisma);
   if (currentId && (await isReady(prisma, currentId))) return resume(currentId);
   return advance(currentId);
+}
+
+export async function recordPosition(queueItemId: string, positionSeconds: number): Promise<boolean> {
+  const { count } = await prisma.playbackState.updateMany({
+    where: { id: PLAYBACK_STATE_ID, currentQueueItemId: queueItemId },
+    data: { positionSeconds },
+  });
+  return count === 1;
 }
 
 export async function lockPlaybackState(tx: Db): Promise<string | null> {
