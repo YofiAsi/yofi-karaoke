@@ -9,13 +9,12 @@ export interface DownloadResult {
 
 export async function downloadYouTubeAudio(
   youtubeVideoId: string,
+  workDir: string,
 ): Promise<DownloadResult> {
-  const tmpRoot = env.WORKER_TMP_DIR;
-  const workDir = path.join(tmpRoot, youtubeVideoId);
   await mkdir(workDir, { recursive: true });
 
-  const outputTemplate = path.join(workDir, `${youtubeVideoId}.%(ext)s`);
-  const targetPath = path.join(workDir, `${youtubeVideoId}.mp3`);
+  const outputTemplate = path.join(workDir, "source.%(ext)s");
+  const targetPath = path.join(workDir, "source.wav");
   const url = `https://youtu.be/${youtubeVideoId}`;
 
   await runProcess(
@@ -25,7 +24,7 @@ export async function downloadYouTubeAudio(
       "bestaudio",
       "-x",
       "--audio-format",
-      "mp3",
+      "wav",
       "--no-playlist",
       "--no-progress",
       "-o",
