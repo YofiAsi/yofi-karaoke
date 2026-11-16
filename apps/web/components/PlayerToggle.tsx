@@ -1,24 +1,12 @@
 "use client";
 
-// Player role: the host device claims the player, and only the player device renders <audio>.
-import { useCallback, useEffect, useRef, useState, type MutableRefObject, type RefObject } from "react";
+// Player role: the host device claims the player, and only the player device plays the song's stems.
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { PlaybackStateView, PositionBody } from "@karaoke/shared";
 import { api } from "@/lib/api";
 import { rememberReport, shouldSeekPlayer } from "@/lib/seekEcho";
-import { vocalsGraph } from "@/lib/vocalsGraph";
-import {
-  FRESH_RESYNC_HISTORY,
-  VOCALS_SYNC_INTERVAL_MS,
-  decideVocals,
-  instrumentalSnapshot,
-  recordCheck,
-  seekTarget,
-  withSeekLatency,
-  type ResyncHistory,
-  vocalsActive,
-  vocalsSnapshot,
-  type VocalsAction,
-} from "@/lib/vocalsSync";
+import type { StemPlayer } from "@/lib/stemPlayer";
+import { useStemPlayer, type LoadStatus, type StemSource } from "@/lib/useStemPlayer";
 
 export interface AudioSource {
   queueItemId: string;
@@ -37,40 +25,19 @@ interface PlayerToggleProps {
 
 const HEARTBEAT_MS = 10_000;
 const POSITION_REPORT_MS = 1000;
-const INSTRUMENTAL_EVENTS = ["play", "playing", "pause", "seeked", "waiting"] as const;
+const TICK_MS = 200;
 const GESTURE_EVENTS = ["click", "touchend", "keydown"] as const;
-const VISIBILITY_EVENTS = ["visibilitychange"] as const;
 
-function audioUrl(songId: string): string {
-  return `/api/audio/${songId}`;
+function stateForLoadedItem(
+  playbackState: PlaybackStateView | null,
+  loadedItemId: string | null,
+): PlaybackStateView | null {
+  if (!playbackState || !loadedItemId || playbackState.currentQueueItemId !== loadedItemId) return null;
+  return playbackState;
 }
 
-function vocalsUrl(songId: string): string {
-  return `/api/audio/${songId}/vocals`;
-}
-
-function loadSource(el: HTMLAudioElement, url: string | null): void {
-  if (!url) {
-    if (el.hasAttribute("src")) {
-      el.removeAttribute("src");
-      el.load();
-    }
-    return;
-  }
-  if (!el.src.endsWith(url)) el.src = url;
-}
-
-function isAutoplayRejection(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "NotAllowedError";
-}
-
-function gainForLoadedItem(playbackState: PlaybackStateView | null, loadedItemId: string | null): number {
-  if (!playbackState || playbackState.currentQueueItemId !== loadedItemId) return 0;
-  return playbackState.vocalsGain;
-}
-
-function browserDocument(): Document | null {
-  return typeof document === "undefined" ? null : document;
+function toStemSource(source: AudioSource | null): StemSource | null {
+  return source ? { ...source, hasVocals: source.hasVocals ?? false } : null;
 }
 
 function usePlayerClaim(isHost: boolean): void {
@@ -115,211 +82,116 @@ function useWakeLock() {
   return { acquire, release };
 }
 
-function useVisibilityWatch(audioRef: RefObject<HTMLAudioElement | null>, onVisiblePlaying: () => void) {
+function useVisibilityWatch(isAudible: () => boolean, onVisible: () => void) {
   const [hiddenWhilePlaying, setHiddenWhilePlaying] = useState(false);
 
   useEffect(() => {
     function onVisibilityChange() {
-      const playing = !!audioRef.current && !audioRef.current.paused;
-      setHiddenWhilePlaying(document.hidden && playing);
-      if (!document.hidden && playing) onVisiblePlaying();
+      setHiddenWhilePlaying(document.hidden && isAudible());
+      if (!document.hidden) onVisible();
     }
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, [audioRef, onVisiblePlaying]);
+  }, [isAudible, onVisible]);
 
   return hiddenWhilePlaying;
 }
 
+function useGestureResume(resume: () => void): void {
+  useEffect(() => {
+    GESTURE_EVENTS.forEach((name) => document.addEventListener(name, resume));
+    return () => GESTURE_EVENTS.forEach((name) => document.removeEventListener(name, resume));
+  }, [resume]);
+}
+
 function usePositionReports(
-  audioRef: RefObject<HTMLAudioElement | null>,
-  loadedItemIdRef: RefObject<string | null>,
+  isAudible: () => boolean,
+  engine: StemPlayer | null,
+  loadedItemId: string | null,
   recentReportsRef: MutableRefObject<number[]>,
 ): void {
   useEffect(() => {
+    if (!engine || !loadedItemId) return;
     const id = setInterval(() => {
-      const el = audioRef.current;
-      const queueItemId = loadedItemIdRef.current;
-      if (!el || el.paused || !queueItemId) return;
-      const report: PositionBody = { queueItemId, positionSeconds: el.currentTime };
+      if (!isAudible()) return;
+      const report: PositionBody = { queueItemId: loadedItemId, positionSeconds: engine.position() };
       recentReportsRef.current = rememberReport(recentReportsRef.current, report.positionSeconds);
       api.post("/api/playback/position", report).catch(console.error);
     }, POSITION_REPORT_MS);
     return () => clearInterval(id);
-  }, [audioRef, loadedItemIdRef, recentReportsRef]);
+  }, [isAudible, engine, loadedItemId, recentReportsRef]);
 }
 
-function useListeners(target: EventTarget | null, events: readonly string[], listener: () => void): void {
-  useEffect(() => {
-    if (!target) return;
-    events.forEach((name) => target.addEventListener(name, listener));
-    return () => events.forEach((name) => target.removeEventListener(name, listener));
-  }, [target, events, listener]);
-}
+function usePositionTicks(engine: StemPlayer | null, ready: boolean, onTick?: (seconds: number) => void) {
+  const lastRef = useRef<number | null>(null);
 
-function useVocalsGain(vocalsRef: RefObject<HTMLAudioElement | null>, gain: number): void {
-  useEffect(() => vocalsGraph.setGain(gain), [gain]);
-
-  useEffect(() => {
-    const el = vocalsRef.current;
-    return () => {
-      if (el) vocalsGraph.detach(el);
-    };
-  }, [vocalsRef]);
-}
-
-function applyVocalsAction(
-  action: VocalsAction,
-  targetSeconds: number,
-  vocals: HTMLAudioElement,
-): Promise<void> {
-  if (action === "pause") vocals.pause();
-  if (action === "resync" || action === "start") vocals.currentTime = targetSeconds;
-  return action === "start" ? vocals.play() : Promise.resolve();
-}
-
-interface VocalsInput {
-  songId: string | null;
-  hasVocals: boolean;
-  gain: number;
-  onFailed?: (songId: string) => void;
-}
-
-function useVocalsFailure(
-  vocalsRef: RefObject<HTMLAudioElement | null>,
-  songId: string | null,
-  onFailed?: (songId: string) => void,
-) {
-  const [failedSongId, setFailedSongId] = useState<string | null>(null);
-  const onFailedRef = useRef(onFailed);
-  onFailedRef.current = onFailed;
+  const emit = useCallback(() => {
+    if (!engine || !ready || !onTick) return;
+    const position = engine.position();
+    if (position === lastRef.current) return;
+    lastRef.current = position;
+    onTick(position);
+  }, [engine, ready, onTick]);
 
   useEffect(() => {
-    const el = vocalsRef.current;
-    if (!el || !songId) return;
-    const failedSong = songId;
-    function onError() {
-      if (!el?.error || !el.src.endsWith(vocalsUrl(failedSong))) return;
-      setFailedSongId(failedSong);
-      onFailedRef.current?.(failedSong);
-    }
-    el.addEventListener("error", onError);
-    return () => el.removeEventListener("error", onError);
-  }, [vocalsRef, songId]);
-
-  return songId !== null && failedSongId === songId;
-}
-
-function useResyncHistory(vocalsRef: RefObject<HTMLAudioElement | null>, songId: string | null) {
-  const historyRef = useRef<ResyncHistory>(FRESH_RESYNC_HISTORY);
-  const seekStartedAtRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    historyRef.current = FRESH_RESYNC_HISTORY;
-    seekStartedAtRef.current = null;
-  }, [songId]);
-
-  useEffect(() => {
-    const el = vocalsRef.current;
-    if (!el) return;
-    function onSeeked() {
-      const startedAt = seekStartedAtRef.current;
-      seekStartedAtRef.current = null;
-      if (startedAt === null) return;
-      historyRef.current = withSeekLatency(historyRef.current, performance.now() - startedAt);
-    }
-    el.addEventListener("seeked", onSeeked);
-    return () => el.removeEventListener("seeked", onSeeked);
-  }, [vocalsRef]);
-
-  return { historyRef, seekStartedAtRef };
-}
-
-function useVocals(
-  instrumentalRef: RefObject<HTMLAudioElement | null>,
-  vocalsRef: RefObject<HTMLAudioElement | null>,
-  { songId, hasVocals, gain, onFailed }: VocalsInput,
-) {
-  useVocalsGain(vocalsRef, gain);
-  const [blocked, setBlocked] = useState(false);
-  const [suspended, setSuspended] = useState(false);
-  const blockedRef = useRef(false);
-  const [instrumental, setInstrumental] = useState<HTMLAudioElement | null>(null);
-  const failed = useVocalsFailure(vocalsRef, songId, onFailed);
-  const { historyRef, seekStartedAtRef } = useResyncHistory(vocalsRef, songId);
-  const active = vocalsActive(gain, hasVocals) && !failed;
-
-  useEffect(() => setInstrumental(instrumentalRef.current), [instrumentalRef]);
-
-  useEffect(() => {
-    const el = vocalsRef.current;
-    if (el) loadSource(el, songId && hasVocals ? vocalsUrl(songId) : null);
-  }, [vocalsRef, songId, hasVocals]);
-
-  const markBlocked = useCallback((value: boolean) => {
-    blockedRef.current = value;
-    setBlocked(value);
-  }, []);
-
-  const sync = useCallback(() => {
-    const master = instrumentalRef.current;
-    const vocals = vocalsRef.current;
-    if (!master || !vocals) return;
-    if (active && !vocalsGraph.attach(vocals)) return;
-    setSuspended(active && !vocalsGraph.isRunning());
-    const now = performance.now();
-    const masterState = instrumentalSnapshot(master);
-    const vocalsState = vocalsSnapshot(vocals);
-    const action = decideVocals(active, masterState, vocalsState, historyRef.current, now);
-    if (action === "start" && blockedRef.current) return;
-    historyRef.current = recordCheck(historyRef.current, action, masterState, vocalsState, now);
-    if (action === "resync") seekStartedAtRef.current = now;
-    const target = seekTarget(master.currentTime, historyRef.current);
-    applyVocalsAction(action, target, vocals).catch((err) => {
-      if (isAutoplayRejection(err)) markBlocked(true);
-    });
-  }, [instrumentalRef, vocalsRef, historyRef, seekStartedAtRef, active, markBlocked]);
-
-  const unlock = useCallback(() => {
-    if (hasVocals) vocalsGraph.resume();
-    markBlocked(false);
-    sync();
-  }, [hasVocals, markBlocked, sync]);
-
-  const resumeWhenVisible = useCallback(() => {
-    if (!document.hidden && hasVocals) vocalsGraph.resume();
-  }, [hasVocals]);
-
-  useEffect(() => {
-    sync();
-    const id = setInterval(sync, VOCALS_SYNC_INTERVAL_MS);
+    lastRef.current = null;
+    emit();
+    const id = setInterval(emit, TICK_MS);
     return () => clearInterval(id);
-  }, [sync]);
+  }, [emit]);
 
-  useListeners(instrumental, INSTRUMENTAL_EVENTS, sync);
-  useListeners(browserDocument(), GESTURE_EVENTS, unlock);
-  useListeners(browserDocument(), VISIBILITY_EVENTS, resumeWhenVisible);
+  return emit;
+}
 
-  return { blocked: (blocked || suspended) && active, unlock };
+function useLatestRef<T>(value: T) {
+  const ref = useRef(value);
+  ref.current = value;
+  return ref;
+}
+
+function reportEnded(expectedQueueItemId: string): void {
+  api.post("/api/playback/ended", { expectedQueueItemId }).catch(console.error);
+}
+
+const NOTICE_CLASS = "rounded-xl bg-neutral-900/95 border text-xs px-3 py-2";
+
+function LoadNotice({ status, onRetry }: { status: LoadStatus; onRetry: () => void }) {
+  if (status === "loading") {
+    return <p className={`${NOTICE_CLASS} self-center border-neutral-700 text-neutral-300`}>Loading audio…</p>;
+  }
+  if (status !== "error") return null;
+  return (
+    <div className={`${NOTICE_CLASS} border-red-400/40 text-red-300 flex items-center justify-between gap-3`}>
+      <span>Could not load this song&apos;s audio.</span>
+      <button type="button" onClick={onRetry} className="rounded-lg bg-white text-black px-3 py-1 font-semibold">
+        Retry
+      </button>
+    </div>
+  );
 }
 
 function PlayerNotices({
   hiddenWhilePlaying,
   showStart,
   onStart,
+  status,
+  onRetry,
 }: {
   hiddenWhilePlaying: boolean;
   showStart: boolean;
   onStart: () => void;
+  status: LoadStatus;
+  onRetry: () => void;
 }) {
-  if (!hiddenWhilePlaying && !showStart) return null;
+  const showLoad = status === "loading" || status === "error";
+  if (!hiddenWhilePlaying && !showStart && !showLoad) return null;
   return (
     <div
       className="fixed inset-x-4 z-[200] flex flex-col gap-2"
       style={{ top: "max(1rem, env(safe-area-inset-top, 0px))" }}
     >
       {hiddenWhilePlaying ? (
-        <p className="rounded-xl bg-neutral-900/95 border border-amber-400/40 text-xs text-amber-400/90 px-3 py-2">
+        <p className={`${NOTICE_CLASS} border-amber-400/40 text-amber-400/90`}>
           This tab is in the background, so iOS may pause audio. Keep the screen on and the
           tab visible while hosting playback.
         </p>
@@ -333,6 +205,7 @@ function PlayerNotices({
           ▶ Tap to start audio
         </button>
       ) : null}
+      <LoadNotice status={status} onRetry={onRetry} />
     </div>
   );
 }
@@ -343,87 +216,70 @@ function PlayerAudio({
   onTick,
   onVocalsFailed,
 }: Omit<PlayerToggleProps, "isHost" | "isPlayer">) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const vocalsRef = useRef<HTMLAudioElement>(null);
-  const loadedItemIdRef = useRef<string | null>(null);
   const recentReportsRef = useRef<number[]>([]);
-  const [blocked, setBlocked] = useState(false);
-  const { acquire: acquireWake, release: releaseWake } = useWakeLock();
-  const hiddenWhilePlaying = useVisibilityWatch(audioRef, acquireWake);
-  usePositionReports(audioRef, loadedItemIdRef, recentReportsRef);
-
-  const audioSongId = source?.songId ?? null;
   const loadedItemId = source?.queueItemId ?? null;
-  const isPlaying = playbackState?.isPlaying ?? false;
-  const positionSeconds = playbackState?.positionSeconds ?? 0;
-  const { blocked: vocalsBlocked, unlock: unlockVocals } = useVocals(audioRef, vocalsRef, {
-    songId: audioSongId,
-    hasVocals: source?.hasVocals ?? false,
-    gain: gainForLoadedItem(playbackState, loadedItemId),
-    onFailed: onVocalsFailed,
+  const { engine, status, running, resume, retry } = useStemPlayer(toStemSource(source), {
+    onEnded: reportEnded,
+    onVocalsFailed,
   });
+  const loadedState = stateForLoadedItem(playbackState, loadedItemId);
+  const ready = status === "ready" && !!engine;
+  const isPlaying = loadedState?.isPlaying ?? false;
+  const isPlayingRef = useLatestRef(isPlaying);
+  const hasLoadedState = loadedState !== null;
+  const positionSeconds = loadedState?.positionSeconds ?? 0;
+  const gain = loadedState?.vocalsGain ?? 0;
+  const { acquire: acquireWake, release: releaseWake } = useWakeLock();
+  const emitTick = usePositionTicks(engine, ready, onTick);
 
-  const startAudio = useCallback(async () => {
-    const el = audioRef.current;
-    if (!el) return;
-    unlockVocals();
-    try {
-      await el.play();
-      setBlocked(false);
-      void acquireWake();
-    } catch {
-      setBlocked(true);
-    }
-  }, [acquireWake, unlockVocals]);
+  const isAudible = useCallback(() => running && !!engine?.isPlaying(), [running, engine]);
+  const onVisible = useCallback(() => {
+    resume();
+    if (isAudible()) void acquireWake();
+  }, [resume, isAudible, acquireWake]);
+  const hiddenWhilePlaying = useVisibilityWatch(isAudible, onVisible);
+  useGestureResume(resume);
+  usePositionReports(isAudible, engine, loadedItemId, recentReportsRef);
 
   useEffect(() => {
-    const el = audioRef.current;
-    if (!el) return;
-    loadedItemIdRef.current = loadedItemId;
     recentReportsRef.current = [];
-    loadSource(el, audioSongId ? audioUrl(audioSongId) : null);
-  }, [audioSongId, loadedItemId]);
+  }, [loadedItemId]);
+
+  useEffect(() => engine?.setVocalsGain(gain), [engine, gain]);
 
   useEffect(() => {
-    const el = audioRef.current;
-    if (!el) return;
-    if (isPlaying && audioSongId && el.paused) void startAudio();
-    if (!isPlaying && !el.paused) {
-      el.pause();
-      releaseWake();
-    }
-  }, [isPlaying, audioSongId, startAudio, releaseWake]);
+    if (!ready || !engine || !hasLoadedState) return;
+    if (!shouldSeekPlayer(engine.position(), positionSeconds, recentReportsRef.current)) return;
+    engine.seek(positionSeconds);
+    if (isPlayingRef.current) engine.play();
+    emitTick();
+  }, [ready, engine, hasLoadedState, positionSeconds, isPlayingRef, emitTick]);
 
   useEffect(() => {
-    const el = audioRef.current;
-    if (!el) return;
-    if (shouldSeekPlayer(el.currentTime, positionSeconds, recentReportsRef.current)) {
-      el.currentTime = positionSeconds;
-    }
-  }, [positionSeconds]);
+    if (!ready || !engine) return;
+    if (isPlaying) engine.play();
+    else engine.pause();
+    emitTick();
+  }, [ready, engine, isPlaying, emitTick]);
 
-  function reportEnded() {
-    const expectedQueueItemId = loadedItemIdRef.current;
-    if (!expectedQueueItemId) return;
-    api.post("/api/playback/ended", { expectedQueueItemId }).catch(console.error);
-  }
+  useEffect(() => {
+    if (isPlaying && running) void acquireWake();
+    else releaseWake();
+  }, [isPlaying, running, acquireWake, releaseWake]);
+
+  const startAudio = useCallback(() => {
+    resume();
+    void acquireWake();
+  }, [resume, acquireWake]);
 
   return (
-    <div>
-      <audio
-        ref={audioRef}
-        preload="metadata"
-        playsInline
-        onEnded={reportEnded}
-        onTimeUpdate={(e) => onTick?.(e.currentTarget.currentTime)}
-      />
-      <audio ref={vocalsRef} preload="none" playsInline />
-      <PlayerNotices
-        hiddenWhilePlaying={hiddenWhilePlaying}
-        showStart={(blocked || vocalsBlocked) && !!audioSongId}
-        onStart={startAudio}
-      />
-    </div>
+    <PlayerNotices
+      hiddenWhilePlaying={hiddenWhilePlaying}
+      showStart={isPlaying && !!source && !running}
+      onStart={startAudio}
+      status={status}
+      onRetry={retry}
+    />
   );
 }
 
