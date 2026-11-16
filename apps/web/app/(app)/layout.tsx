@@ -8,6 +8,7 @@ import type {
   PlaybackStateView,
   SongProgressEvent,
   PlaybackTickEvent,
+  User,
 } from "@karaoke/shared";
 import { api } from "@/lib/api";
 import { nameUrlFor } from "@/lib/returnPath";
@@ -34,7 +35,8 @@ function toLyricsState({ lrc, plain }: LyricsResponse) {
 export default function AppShellLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const socket = useSocket();
-  const [user, setUser] = useState(() => loadStoredUser());
+  const [user, setUser] = useState<User | null>(null);
+  const [userChecked, setUserChecked] = useState(false);
   const [queue, setQueue] = useState<QueueView | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackStateView | null>(null);
   const [lastTick, setLastTick] = useState<PlaybackTickEvent | null>(null);
@@ -49,8 +51,11 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
 
   useEffect(() => {
     let cancelled = false;
+    setUser(loadStoredUser());
     validateStoredUser().then((validated) => {
-      if (!cancelled) setUser(validated);
+      if (cancelled) return;
+      setUser(validated);
+      setUserChecked(true);
     });
     return () => {
       cancelled = true;
@@ -58,10 +63,10 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   }, []);
 
   useEffect(() => {
-    if (!user) {
+    if (userChecked && !user) {
       router.replace(nameUrlFor(window.location.pathname));
     }
-  }, [user, router]);
+  }, [user, userChecked, router]);
 
   const fetchQueue = useCallback(async () => {
     try {

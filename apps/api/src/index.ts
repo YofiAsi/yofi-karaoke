@@ -62,8 +62,12 @@ async function build() {
   app.setErrorHandler((err, _req, reply) => {
     const error = err as Error & { statusCode?: number };
     const statusCode = error.statusCode ?? 500;
-    reply.log.error({ err }, "request error");
-    reply.code(statusCode).send({ error: error.message ?? "internal_error" });
+    if (statusCode >= 500) {
+      reply.log.error({ err }, "request error");
+      return reply.code(statusCode).send({ error: "internal_error" });
+    }
+    reply.log.info({ statusCode, code: error.message }, "request refused");
+    return reply.code(statusCode).send({ error: error.message });
   });
 
   return app;
