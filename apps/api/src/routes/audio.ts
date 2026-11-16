@@ -1,57 +1,42 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../db.js";
-import { getObjectStream, statObject } from "../minio.js";
+import { streamAudioObject } from "./audioStream.js";
 
 const ParamsSchema = z.object({ songId: z.string().uuid() });
-const RANGE_RE = /^bytes=(\d*)-(\d*)$/;
+
+async function loadStemKeys(songId: string) {
+  return prisma.song.findUnique({
+    where: { id: songId },
+    select: { instrumentalObjectKey: true, vocalsObjectKey: true },
+  });
+}
 
 export async function registerAudioRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/audio/:songId", {
     schema: { params: ParamsSchema },
     handler: async (req, reply) => {
       const { songId } = req.params as { songId: string };
-
-      const song = await prisma.song.findUnique({ where: { id: songId } });
-      if (!song || !song.instrumentalObjectKey) {
+      const song = await loadStemKeys(songId);
+      if (!song?.instrumentalObjectKey) {
         return reply.code(404).send({ error: "not_ready" });
       }
-      const key = song.instrumentalObjectKey;
+      return streamAudioObject(req, reply, song.instrumentalObjectKey);
+    },
+  });
 
-      const head = await statObject(key);
-      const total = head.contentLength;
-      const rangeHeader = req.headers.range;
-      const match = typeof rangeHeader === "string" ? RANGE_RE.exec(rangeHeader) : null;
-
-      if (!match) {
-        const { body } = await getObjectStream(key);
-        reply
-          .header("Content-Type", head.contentType)
-          .header("Content-Length", String(total))
-          .header("Accept-Ranges", "bytes")
-          .header("Cache-Control", "private, max-age=0, must-revalidate");
-        return reply.send(body);
+  app.get("/api/audio/:songId/vocals", {
+    schema: { params: ParamsSchema },
+    handler: async (req, reply) => {
+      const { songId } = req.params as { songId: string };
+      const song = await loadStemKeys(songId);
+      if (!song?.instrumentalObjectKey) {
+        return reply.code(404).send({ error: "not_ready" });
       }
-
-      const start = match[1] ? Number(match[1]) : 0;
-      const end = match[2] ? Number(match[2]) : total - 1;
-
-      if (isNaN(start) || isNaN(end) || start > end || end >= total) {
-        return reply
-          .code(416)
-          .header("Content-Range", `bytes */${total}`)
-          .send();
+      if (!song.vocalsObjectKey) {
+        return reply.code(404).send({ error: "no_vocals" });
       }
-
-      const { body } = await getObjectStream(key, { start, end });
-      reply
-        .code(206)
-        .header("Content-Type", head.contentType)
-        .header("Content-Length", String(end - start + 1))
-        .header("Content-Range", `bytes ${start}-${end}/${total}`)
-        .header("Accept-Ranges", "bytes")
-        .header("Cache-Control", "private, max-age=0, must-revalidate");
-      return reply.send(body);
+      return streamAudioObject(req, reply, song.vocalsObjectKey);
     },
   });
 }
