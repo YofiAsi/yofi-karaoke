@@ -26,7 +26,12 @@ async function unchanged(tx: Db): Promise<PlaybackTransitionResult> {
 async function setCurrent(tx: Db, queueItemId: string | null): Promise<void> {
   await tx.playbackState.update({
     where: { id: PLAYBACK_STATE_ID },
-    data: { currentQueueItemId: queueItemId, positionSeconds: 0, isPlaying: queueItemId !== null },
+    data: {
+      currentQueueItemId: queueItemId,
+      positionSeconds: 0,
+      isPlaying: queueItemId !== null,
+      vocalsGain: 0,
+    },
   });
 }
 

@@ -5,7 +5,8 @@ const { mockPrisma, enqueueProcessSong, ytdlpInfo, events } = vi.hoisted(() => {
   const events: string[] = [];
   const mockPrisma = {
     song: { findUnique: vi.fn(), upsert: vi.fn(), findUniqueOrThrow: vi.fn() },
-    queueItem: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn(), aggregate: vi.fn() },
+    user: { findUnique: vi.fn() },
+    queueItem: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn(), aggregate: vi.fn(), count: vi.fn() },
     processingJob: { findFirst: vi.fn(), deleteMany: vi.fn(), create: vi.fn() },
     $queryRaw: vi.fn(async () => {
       events.push("lock");
@@ -19,10 +20,11 @@ const { mockPrisma, enqueueProcessSong, ytdlpInfo, events } = vi.hoisted(() => {
 });
 
 vi.mock("../db.js", () => ({ prisma: mockPrisma }));
+vi.mock("../env.js", () => ({ env: { MAX_ACTIVE_ITEMS_PER_USER: 5 } }));
 vi.mock("../jobs/enqueueProcessSong.js", () => ({ enqueueProcessSong }));
 vi.mock("../ytdlp.js", () => ({ ytdlpInfo, pickTrackMetadata: () => ({}) }));
 
-import { findOrCreateSong, nextPosition, queueSong, reviveFailedItem } from "./addition.js";
+import { exceedsQueueLimit, findOrCreateSong, nextPosition, queueSong, reviveFailedItem } from "./addition.js";
 
 const USER_ID = "00000000-0000-4000-8000-0000000000u1";
 const ALICE_ID = "00000000-0000-4000-8000-0000000000a1";
@@ -44,7 +46,15 @@ function uniqueViolation(): Prisma.PrismaClientKnownRequestError {
   return new Prisma.PrismaClientKnownRequestError("unique", { code: "P2002", clientVersion: "5" });
 }
 
-function givenQueue({ failed = null as unknown, active = null as unknown, openJob = null as unknown }) {
+function givenQueue({
+  failed = null as unknown,
+  active = null as unknown,
+  openJob = null as unknown,
+  userActiveCount = 0,
+  isHost = false,
+}) {
+  mockPrisma.user.findUnique.mockResolvedValue({ isHost });
+  mockPrisma.queueItem.count.mockResolvedValue(userActiveCount);
   mockPrisma.queueItem.findFirst.mockImplementation(async ({ where }: { where: { state: unknown } }) =>
     where.state === "failed" ? failed : active,
   );
@@ -142,6 +152,46 @@ describe("queueSong for a new item", () => {
 
     await expect(queueSong(song(), USER_ID)).rejects.toMatchObject({ statusCode: 409, message: "already_queued" });
     expect(enqueueProcessSong).not.toHaveBeenCalled();
+  });
+});
+
+describe("queueSong per user limit", () => {
+  it("rejects a guest who already has the maximum active items", async () => {
+    givenQueue({ userActiveCount: 5 });
+
+    await expect(queueSong(song(), USER_ID)).rejects.toMatchObject({ statusCode: 409, message: "queue_limit" });
+    expect(mockPrisma.queueItem.count).toHaveBeenCalledWith({
+      where: { requestedByUserId: USER_ID, state: { in: ["queued", "processing", "ready"] } },
+    });
+    expect(mockPrisma.queueItem.create).not.toHaveBeenCalled();
+    expect(enqueueProcessSong).not.toHaveBeenCalled();
+  });
+
+  it("lets the host queue beyond the limit", async () => {
+    givenQueue({ userActiveCount: 9, isHost: true });
+    mockPrisma.queueItem.create.mockImplementation(async ({ data }: { data: object }) => ({ id: "new", ...data }));
+
+    await expect(queueSong(song(), USER_ID)).resolves.toMatchObject({ id: "new" });
+  });
+
+  it("applies the limit when a failed item is handed to a new requester", async () => {
+    givenQueue({ failed: FAILED_ITEM, userActiveCount: 5 });
+
+    await expect(queueSong(song(), USER_ID)).rejects.toMatchObject({ message: "queue_limit" });
+    expect(mockPrisma.queueItem.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not count a retry that keeps the original requester", async () => {
+    givenQueue({ userActiveCount: 5 });
+    mockPrisma.queueItem.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(reviveFailedItem(FAILED_ITEM as never, song())).resolves.toMatchObject({ state: "queued" });
+  });
+
+  it("compares the active count against the limit", () => {
+    expect(exceedsQueueLimit(4, 5, false)).toBe(false);
+    expect(exceedsQueueLimit(5, 5, false)).toBe(true);
+    expect(exceedsQueueLimit(50, 5, true)).toBe(false);
   });
 });
 

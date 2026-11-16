@@ -1,6 +1,7 @@
 // Adding songs to the queue, reviving failed items, and starting song processing.
 import { Prisma, QueueState, type QueueItem, type Song } from "@prisma/client";
 import { prisma } from "../db.js";
+import { env } from "../env.js";
 import { lockPlaybackState } from "../playback/transitions.js";
 import { pickTrackMetadata, ytdlpInfo } from "../ytdlp.js";
 import { isYtVideoUnavailableMessage } from "../ytdlp/isVideoUnavailable.js";
@@ -88,9 +89,24 @@ async function rejectIfActive(songId: string, exceptId?: string): Promise<void> 
   if (active) throw httpError(409, "already_queued");
 }
 
+export function exceedsQueueLimit(activeCount: number, limit: number, isHost: boolean): boolean {
+  return !isHost && activeCount >= limit;
+}
+
+async function rejectIfOverLimit(tx: Db, userId: string): Promise<void> {
+  const user = await tx.user.findUnique({ where: { id: userId }, select: { isHost: true } });
+  const activeCount = await tx.queueItem.count({
+    where: { requestedByUserId: userId, state: { in: ACTIVE_QUEUE_STATES } },
+  });
+  if (exceedsQueueLimit(activeCount, env.MAX_ACTIVE_ITEMS_PER_USER, !!user?.isHost)) {
+    throw httpError(409, "queue_limit");
+  }
+}
+
 async function revivalChanges(tx: Db, song: Song, newRequesterId?: string) {
   const state = revivedItemState(song);
   if (!newRequesterId) return { state };
+  await rejectIfOverLimit(tx, newRequesterId);
   return { state, requestedByUserId: newRequesterId, position: await nextPosition(tx) };
 }
 
@@ -113,16 +129,17 @@ export async function reviveFailedItem(
 
 async function createQueueItem(song: Song, userId: string): Promise<QueueItem> {
   await rejectIfActive(song.id);
-  return withQueueLock(async (tx) =>
-    tx.queueItem.create({
+  return withQueueLock(async (tx) => {
+    await rejectIfOverLimit(tx, userId);
+    return tx.queueItem.create({
       data: {
         songId: song.id,
         requestedByUserId: userId,
         position: await nextPosition(tx),
         state: newItemState(song),
       },
-    }),
-  );
+    });
+  });
 }
 
 async function latestFailedItem(songId: string): Promise<QueueItem | null> {

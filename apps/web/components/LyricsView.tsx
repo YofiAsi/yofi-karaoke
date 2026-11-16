@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LrcLine } from "@/lib/lrc";
+import { activeLineIndex } from "@/lib/lyricsTiming";
+import { positionAt, type PositionClock } from "@/lib/positionClock";
 
 interface LyricsViewProps {
   lines: LrcLine[];
@@ -9,9 +11,35 @@ interface LyricsViewProps {
   plainText?: string;
   expandToFill?: boolean;
   offsetMs?: number;
+  clock?: PositionClock | null;
+  durationSeconds?: number;
 }
 
-const LOOKAHEAD_SECONDS = 0.3;
+function useClockLineIndex(
+  lines: LrcLine[],
+  offsetMs: number,
+  clock: PositionClock | null,
+  durationSeconds: number | undefined,
+): number | null {
+  const [index, setIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!clock) {
+      setIndex(null);
+      return;
+    }
+    const update = () => setIndex(activeLineIndex(lines, positionAt(clock, Date.now(), durationSeconds), offsetMs));
+    update();
+    if (!clock.isPlaying) return;
+    let frame = requestAnimationFrame(function tick() {
+      update();
+      frame = requestAnimationFrame(tick);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [lines, offsetMs, clock, durationSeconds]);
+
+  return index;
+}
 
 export function LyricsView({
   lines,
@@ -19,16 +47,12 @@ export function LyricsView({
   plainText,
   expandToFill,
   offsetMs = 0,
+  clock = null,
+  durationSeconds,
 }: LyricsViewProps) {
   const activeRef = useRef<HTMLParagraphElement>(null);
-
-  const adjustedPosition = positionSeconds + LOOKAHEAD_SECONDS - offsetMs / 1000;
-  let activeIdx = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].time <= adjustedPosition) {
-      activeIdx = i;
-    }
-  }
+  const clockIdx = useClockLineIndex(lines, offsetMs, clock, durationSeconds);
+  const activeIdx = clockIdx ?? activeLineIndex(lines, positionSeconds, offsetMs);
 
   useEffect(() => {
     activeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });

@@ -16,6 +16,7 @@ export function toPlaybackStateView(state: PlaybackState): PlaybackStateView {
     isPlaying: state.isPlaying,
     hostUserId: state.hostUserId ?? null,
     playerUserId: state.playerUserId ?? null,
+    vocalsGain: state.vocalsGain,
   };
 }
 

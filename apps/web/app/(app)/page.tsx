@@ -7,6 +7,8 @@ import { NowPlaying } from "@/components/NowPlaying";
 import { HostControls } from "@/components/HostControls";
 import { LyricsView } from "@/components/LyricsView";
 import { QueueDrawer } from "@/components/QueueDrawer";
+import { VocalsSlider } from "@/components/VocalsSlider";
+import { canControlVocals } from "@/lib/roles";
 
 export default function HomePage() {
   const {
@@ -21,6 +23,7 @@ export default function HomePage() {
     setLyricsOffsetMs,
     audioPosition,
     refetchQueue,
+    positionClock,
   } = useAppShell();
   const [queueOpen, setQueueOpen] = useState(false);
 
@@ -77,6 +80,14 @@ export default function HomePage() {
             lyricsOffsetMs={lyricsOffsetMs}
             onLyricsOffsetChange={setLyricsOffsetMs}
           />
+          {current && canControlVocals(user, isHost, current) && (
+            <VocalsSlider
+              key={current.id}
+              queueItemId={current.id}
+              hasVocals={current.song.hasVocals}
+              serverGain={playbackState?.vocalsGain ?? 0}
+            />
+          )}
         </div>
         {current && (
           <LyricsView
@@ -84,6 +95,8 @@ export default function HomePage() {
             positionSeconds={audioPosition ?? playbackState?.positionSeconds ?? 0}
             plainText={plainLyrics ?? undefined}
             offsetMs={lyricsOffsetMs}
+            clock={positionClock}
+            durationSeconds={current.song.durationSeconds}
             expandToFill
           />
         )}

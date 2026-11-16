@@ -63,6 +63,7 @@ export const SongSchema = z.object({
   thumbnailUrl: z.string(),
   hasInstrumental: z.boolean(),
   hasLyrics: z.boolean(),
+  hasVocals: z.boolean(),
 });
 export type Song = z.infer<typeof SongSchema>;
 
@@ -105,8 +106,15 @@ export const PlaybackStateSchema = z.object({
   isPlaying: z.boolean(),
   hostUserId: z.string().uuid().nullable(),
   playerUserId: z.string().uuid().nullable(),
+  vocalsGain: z.number().min(0).max(1),
 });
 export type PlaybackStateView = z.infer<typeof PlaybackStateSchema>;
+
+export const VocalsGainBodySchema = z.object({
+  gain: z.number().min(0).max(1),
+  queueItemId: z.string().uuid(),
+});
+export type VocalsGainBody = z.infer<typeof VocalsGainBodySchema>;
 
 export const QueueItemParamsSchema = z.object({
   queueItemId: z.string().uuid(),

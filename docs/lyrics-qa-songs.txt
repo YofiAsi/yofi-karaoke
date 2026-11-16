@@ -1,0 +1,8 @@
+# One song per line: video title ;; channel name ;; duration (m:ss or seconds)
+# Copy the title and channel exactly as YouTube shows them. Lines starting with # are skipped.
+עומר אדם - שני משוגעים (Prod. by Moshe & Ofek) ;; Omer Adam ;; 2:56
+חנן בן ארי - אמא אם הייתי (קליפ רשמי) ;; חנן בן ארי ;; 3:35
+Noa Kirel - Unicorn | Israel | Official Music Video | Eurovision 2023 ;; Eurovision Song Contest ;; 3:03
+Bruno Mars - Uptown Funk (Official Video) ft. Mark Ronson ;; Mark Ronson ;; 4:31
+Queen – Bohemian Rhapsody (Official Video Remastered) ;; Queen Official ;; 5:59
+Adele - Hello (Official Music Video) ;; Adele ;; 6:07
