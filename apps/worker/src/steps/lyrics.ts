@@ -61,7 +61,7 @@ interface LookupRun {
 
 const USER_AGENT = "karaoke-worker/0.2 (self hosted party karaoke)";
 const MAX_DURATION_DELTA_SECONDS = 15;
-const LOOKUP_DEADLINE_MS = 45_000;
+export const LOOKUP_DEADLINE_MS = 45_000;
 const MAX_RETRY_DELAY_MS = 10_000;
 const FAILURE_PRIORITY: FailureKind[] = ["rate_limited", "timeout", "network_error", "http_error"];
 const BREAKER_FAILURES: ReadonlySet<FailureKind> = new Set(["rate_limited", "timeout", "network_error"]);

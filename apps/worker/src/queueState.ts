@@ -54,27 +54,3 @@ async function restoreLatestFailedItem(songId: string): Promise<void> {
 function isUniqueViolation(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as { code?: string }).code === UNIQUE_VIOLATION;
 }
-
-export async function failStaleJobs(olderThanMinutes: number, message: string): Promise<string[]> {
-  const { rows } = await pool.query<{ songId: string }>(
-    `UPDATE "ProcessingJob"
-        SET "step" = 'error'::"ProcessingStep",
-            "errorMessage" = $2,
-            "completedAt" = NOW()
-      WHERE "completedAt" IS NULL
-        AND "step" NOT IN ('done','error')
-        AND COALESCE("startedAt", 'epoch') < NOW() - make_interval(mins => $1)
-      RETURNING "songId"`,
-    [olderThanMinutes, message],
-  );
-  const songIds = [...new Set(rows.map((r) => r.songId))];
-  if (songIds.length > 0) {
-    await pool.query(
-      `UPDATE "QueueItem"
-          SET "state" = 'failed'::"QueueState"
-        WHERE "songId" = ANY($1::uuid[]) AND "state" IN ('queued','processing')`,
-      [songIds],
-    );
-  }
-  return songIds;
-}
