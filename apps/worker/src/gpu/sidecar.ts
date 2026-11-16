@@ -27,7 +27,7 @@ interface InFlight {
 }
 
 const DEFAULT_EXIT_GRACE_MS = 5_000;
-const DEFAULT_STDERR_TAIL_CHARS = 4_000;
+const DEFAULT_STDERR_TAIL_CHARS = 2_000;
 
 function isResponse(value: unknown): value is SidecarResponse {
   return typeof value === "object" && value !== null && "id" in value && typeof (value as SidecarResponse).ok === "boolean";
@@ -50,6 +50,7 @@ export class GpuSidecar {
   private child: ChildProcess | null = null;
   private exits = new Map<ChildProcess, Promise<void>>();
   private inFlight: InFlight | null = null;
+  private closed = false;
   private nextId = 1;
   private stdoutBuffer = "";
   private stderrTail = "";
@@ -68,9 +69,11 @@ export class GpuSidecar {
   }
 
   request<T>(op: string, params: object, timeoutMs: number): Promise<T> {
+    if (this.closed) return Promise.reject(new Error(`gpu sidecar is shut down; ${op} not started`));
     if (this.inFlight) return Promise.reject(new Error(`gpu sidecar is busy with ${this.inFlight.op}; requests must go through the GPU lane`));
     const child = this.ensureChild();
     const id = this.nextId++;
+    this.stderrTail = "";
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => void this.timeOut(id, timeoutMs), timeoutMs);
       this.inFlight = { id, op, child, resolve: resolve as (value: unknown) => void, reject, timer };
@@ -79,6 +82,7 @@ export class GpuSidecar {
   }
 
   async stop(): Promise<void> {
+    this.closed = true;
     const child = this.child;
     if (!child) return;
     this.child = null;
@@ -87,8 +91,10 @@ export class GpuSidecar {
   }
 
   killNow(): void {
-    this.child?.kill();
+    this.closed = true;
+    const child = this.child;
     this.child = null;
+    if (child && !hasExited(child)) this.kill(child);
   }
 
   private ensureChild(): ChildProcess {
@@ -96,7 +102,6 @@ export class GpuSidecar {
     const child = this.options.spawn();
     this.child = child;
     this.stdoutBuffer = "";
-    this.stderrTail = "";
     this.exits.set(child, new Promise((resolve) => child.once("exit", () => {
       this.exits.delete(child);
       resolve();
@@ -107,28 +112,32 @@ export class GpuSidecar {
     child.stderr?.on("data", (chunk: string) => this.onStderr(child, chunk));
     child.stdin?.on("error", () => void 0);
     child.on("exit", (code, signal) => this.onExit(child, `exited with ${code ?? signal}`));
-    child.on("error", (err) => this.onExit(child, `failed: ${err.message}`));
+    child.on("error", (err) => this.onSpawnError(child, err));
     return child;
   }
 
+  private isTracked(child: ChildProcess): boolean {
+    return child === this.child || child === this.inFlight?.child;
+  }
+
   private onStdout(child: ChildProcess, chunk: string): void {
-    if (child !== this.child) return;
+    if (!this.isTracked(child)) return;
     this.stdoutBuffer += chunk;
     const lines = this.stdoutBuffer.split("\n");
     this.stdoutBuffer = lines.pop() ?? "";
-    for (const line of lines) this.onLine(line.trim());
+    for (const line of lines) this.onLine(child, line.trim());
   }
 
   private onStderr(child: ChildProcess, chunk: string): void {
-    if (child !== this.child) return;
+    if (!this.isTracked(child)) return;
     this.stderrTail = (this.stderrTail + chunk).slice(-this.stderrTailChars);
   }
 
-  private onLine(line: string): void {
+  private onLine(child: ChildProcess, line: string): void {
     if (!line) return;
     const response = parseLine(line);
     if (!response || response.id !== this.inFlight?.id) {
-      this.onStderr(this.child as ChildProcess, `[stdout] ${line}\n`);
+      this.onStderr(child, `[stdout] ${line}\n`);
       return;
     }
     void this.settle(response);
@@ -157,8 +166,23 @@ export class GpuSidecar {
   private onExit(child: ChildProcess, how: string): void {
     if (child === this.child) this.child = null;
     if (this.inFlight?.child !== child) return;
+    const fallback = setTimeout(() => this.failInFlight(child, how), this.exitGraceMs);
+    child.once("close", () => {
+      clearTimeout(fallback);
+      this.failInFlight(child, how);
+    });
+  }
+
+  private onSpawnError(child: ChildProcess, err: Error): void {
+    if (child === this.child) this.child = null;
+    this.failInFlight(child, `failed: ${err.message}`);
+  }
+
+  private failInFlight(child: ChildProcess, how: string): void {
+    if (this.inFlight?.child !== child) return;
+    const stderr = this.stderrTail;
     const call = this.takeInFlight();
-    call?.reject(new Error(`gpu sidecar ${how} during ${call.op}\nstderr: ${this.stderrTail}`));
+    call?.reject(new Error(`gpu sidecar ${how} during ${call.op}\nstderr: ${stderr}`));
   }
 
   private takeInFlight(): InFlight | null {

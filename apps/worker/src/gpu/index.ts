@@ -1,7 +1,8 @@
 /* The worker's single GPU lane: every separation and transcription goes through one warm sidecar, one request at a time. */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import type { Job } from "graphile-worker";
 import { env } from "../env.js";
+import { treeKillCommand } from "../steps/runProcess.js";
 import { GpuLane, type GpuPriority } from "./lane.js";
 import { GpuSidecar } from "./sidecar.js";
 
@@ -22,15 +23,36 @@ const SONG_TIER = 0;
 const REFETCH_TIER = 1;
 const PYTHON_UTF8_ENV = { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" };
 
-function spawnSidecar() {
+const OWN_PROCESS_GROUP = process.platform !== "win32";
+
+function spawnSidecar(): ChildProcess {
   return spawn(env.PYTHON_BIN, [env.GPU_SIDECAR_PY_PATH], {
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
+    detached: OWN_PROCESS_GROUP,
     env: PYTHON_UTF8_ENV,
   });
 }
 
-const sidecar = new GpuSidecar({ spawn: spawnSidecar });
+function killProcessGroup(pid: number): boolean {
+  try {
+    process.kill(-pid, "SIGKILL");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function killSidecarTree(child: ChildProcess): void {
+  const command = child.pid ? treeKillCommand(process.platform, child.pid) : null;
+  if (command) {
+    spawnSync(command[0], command[1], { stdio: "ignore", windowsHide: true });
+    return;
+  }
+  if (!(child.pid && OWN_PROCESS_GROUP && killProcessGroup(child.pid))) child.kill("SIGKILL");
+}
+
+const sidecar = new GpuSidecar({ spawn: spawnSidecar, kill: killSidecarTree });
 const lane = new GpuLane();
 let prewarmQueued = false;
 
