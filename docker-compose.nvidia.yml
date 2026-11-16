@@ -85,6 +85,9 @@ services:
         condition: service_started
       api:
         condition: service_healthy
+    volumes:
+      - models:/app/models
+      - worker-tmp:/tmp/karaoke
     healthcheck:
       test: ["CMD-SHELL", "pidof node >/dev/null 2>&1 || exit 1"]
       interval: 30s
@@ -121,3 +124,5 @@ services:
 volumes:
   pgdata:
   miniodata:
+  models:
+  worker-tmp:

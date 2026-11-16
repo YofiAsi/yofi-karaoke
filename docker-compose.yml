@@ -83,6 +83,9 @@ services:
         condition: service_started
       api:
         condition: service_healthy
+    volumes:
+      - karaoke-models:/app/models
+      - karaoke-worker-tmp:/tmp/karaoke
     healthcheck:
       test: ["CMD-SHELL", "pidof node >/dev/null 2>&1 || exit 1"]
       interval: 30s
@@ -119,3 +122,5 @@ services:
 volumes:
   karaoke-pgdata:
   karaoke-miniodata:
+  karaoke-models:
+  karaoke-worker-tmp:
