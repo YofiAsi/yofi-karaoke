@@ -10,7 +10,7 @@ vi.mock("../env.js", () => ({
   },
 }));
 
-import { artistMatches, fetchLyrics, pickBestEntry } from "./lyrics.js";
+import { artistMatches, fetchLyrics, pickBestEntry, retryDelayMs } from "./lyrics.js";
 
 const SYNCED = "[00:01.00]line";
 const PLAIN = "line";
@@ -56,6 +56,17 @@ describe("pickBestEntry", () => {
 
   it("skips instrumental entries", () => {
     expect(pickBestEntry([{ duration: 200, instrumental: true, plainLyrics: PLAIN }], 200)).toBeNull();
+  });
+});
+
+describe("retryDelayMs", () => {
+  it("clamps a large Retry-After header to 10 seconds", () => {
+    expect(retryDelayMs(new Response("", { status: 429, headers: { "retry-after": "600" } }), 0)).toBe(10_000);
+  });
+
+  it("backs off exponentially without a header", () => {
+    expect(retryDelayMs(new Response("", { status: 429 }), 0)).toBe(2_000);
+    expect(retryDelayMs(new Response("", { status: 429 }), 1)).toBe(4_000);
   });
 });
 
@@ -107,7 +118,7 @@ describe("fetchLyrics", () => {
     expect(result).toMatchObject({ source: "lrclib_plain", syncedLyrics: null, plainLyrics: PLAIN });
   });
 
-  it("retries 429 and reports rate limiting when it persists", async () => {
+  it("retries 429, then stops querying LRCLIB for the rest of the run", async () => {
     const calls = stubFetch((url) =>
       url.hostname === "lrclib.test"
         ? new Response("", { status: 429, headers: { "retry-after": "0.001" } })
@@ -115,9 +126,58 @@ describe("fetchLyrics", () => {
     );
     const result = await fetchLyrics(song, silent);
     expect(result).toMatchObject({ source: "none", missReason: "rate_limited" });
-    const lrclibCalls = calls.filter((c) => c.hostname === "lrclib.test");
-    expect(lrclibCalls.length % 3).toBe(0);
-    expect(lrclibCalls.length).toBeGreaterThanOrEqual(9);
+    expect(calls.filter((c) => c.hostname === "lrclib.test")).toHaveLength(3);
+    expect(calls.filter((c) => c.hostname === "api.lyrics.ovh")).toHaveLength(1);
+  });
+
+  it("opens the breaker after the first LRCLIB timeout", async () => {
+    const calls: URL[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: URL) => {
+        calls.push(url);
+        if (url.hostname === "lrclib.test") throw Object.assign(new Error("aborted"), { name: "TimeoutError" });
+        return json({}, 404);
+      }),
+    );
+    const result = await fetchLyrics(song, silent);
+    expect(result.missReason).toBe("timeout");
+    expect(calls.filter((c) => c.hostname === "lrclib.test")).toHaveLength(1);
+  });
+
+  it("makes no requests once the overall deadline has passed", async () => {
+    const calls = stubFetch(() => json({}, 404));
+    const result = await fetchLyrics(song, silent, 0);
+    expect(result).toMatchObject({ source: "none", missReason: "timeout" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("survives null and non array LRCLIB bodies", async () => {
+    stubFetch((url) => {
+      if (url.pathname === "/api/get") return json(null);
+      if (url.searchParams.has("q")) return json([null, 7, { duration: 240, plainLyrics: PLAIN }]);
+      return json({ error: "unexpected" });
+    });
+    const result = await fetchLyrics(song, silent);
+    expect(result).toMatchObject({ source: "lrclib_plain", plainLyrics: PLAIN });
+  });
+
+  it("turns an unexpected exception into an http_error miss", async () => {
+    const logs: string[] = [];
+    const broken = { title: undefined as unknown as string, artist: "x", durationSeconds: 100 };
+    const result = await fetchLyrics(broken, (m) => logs.push(m));
+    expect(result).toMatchObject({ source: "none", missReason: "http_error" });
+    expect(logs.some((l) => l.includes("failed unexpectedly"))).toBe(true);
+  });
+
+  it("does not trust artist names that only appear in the title", async () => {
+    stubFetch((url) =>
+      url.pathname === "/api/search" && url.searchParams.has("track_name") && !url.searchParams.has("artist_name")
+        ? json([{ artistName: "Tudo", duration: 200, syncedLyrics: SYNCED }])
+        : json({}, 404),
+    );
+    const result = await fetchLyrics({ title: "Somebody - Tudo Bom Remix", artist: "Other Channel", durationSeconds: 200 }, silent);
+    expect(result.source).toBe("none");
   });
 
   it("uses lyrics.ovh last and reports not_found on a full miss", async () => {
