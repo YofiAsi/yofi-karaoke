@@ -54,6 +54,14 @@ pnpm --filter web dev                      # Next on :3000; set NEXT_PUBLIC_WS_U
 
 See [`docs/phase-1-smoke-test.md`](docs/phase-1-smoke-test.md) for the end-to-end acceptance test that proves vocal separation works on the Arc GPU.
 
+## Party features
+
+* **TV screen**: open `/tv` on a laptop or smart TV browser connected to the big screen (pick any name first). It shows large synced lyrics, the current song and singer, the next three songs, and a QR code with the app address so guests can join. It has no controls. The host finds a link in the queue drawer and the library.
+* **Library**: every guest can browse songs that were already processed at `/library` (also linked from the search page) and queue them instantly.
+* **Search limits**: YouTube search results are cached per query for 10 minutes, at most 2 yt-dlp searches run at once, identical searches share one process, and each guest gets 20 uncached searches per minute (429 `rate_limited` beyond that).
+* **Queue limit**: a guest may have at most `MAX_ACTIVE_ITEMS_PER_USER` songs queued, processing or ready at once (default 5, the host is exempt). Adding more answers 409 `queue_limit`.
+* **Install**: the web app ships a manifest and icons, so guests can add it to their home screen.
+
 ## Deployment (Dokploy)
 
 Production uses **[`docker-compose.yml`](docker-compose.yml)** only (Intel/OpenVINO). **Do not** add Traefik or TLS configuration to the repo — configure the hostname and HTTPS in the **Dokploy UI**; Dokploy’s edge handles certificates.
