@@ -1,5 +1,6 @@
 --extra-index-url https://download.pytorch.org/whl/cu128
-torch>=2.7.0
-onnxruntime-gpu>=1.22.0
+torch>=2.7.0,<2.12
+onnxruntime-gpu>=1.22.0,<1.27
 audio-separator>=0.44.0
+librosa>=0.10,<1
 yt-dlp[default]
