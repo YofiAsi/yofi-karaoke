@@ -70,6 +70,27 @@ describe("applyTranscript", () => {
   it("keeps no lyrics when the transcript is too thin", () => {
     expect(applyTranscript(none, sung("yeah", 3), log)).toBe(none);
   });
+
+  it("aligns Tab4U lyrics like any other plain source", () => {
+    expect(applyTranscript({ ...plain, source: "tab4u" }, heard, log).source).toBe("aligned");
+  });
+
+  it("drops rejected Tab4U lyrics and falls back to Whisper lines", () => {
+    const scraped: LyricsResult = { ...plain, plainLyrics: "a different song\nwith other words\nthat nobody sang", source: "tab4u" };
+    const result = applyTranscript(scraped, heard, log);
+    expect(result).toMatchObject({ source: "whisper", plainLyrics: null, missReason: null });
+    expect(result.syncedLyrics?.split("\n")[0]).toMatch(/^\[00:10\.00\]you used to call/);
+  });
+
+  it("shows nothing when rejected Tab4U lyrics meet a thin transcript", () => {
+    const result = applyTranscript({ ...plain, source: "tab4u" }, sung("something else entirely sung here today", 3), log);
+    expect(result).toMatchObject({ source: "none", syncedLyrics: null, plainLyrics: null, missReason: "not_found" });
+  });
+
+  it("keeps pasted lyrics when alignment is rejected", () => {
+    const manual: LyricsResult = { ...plain, source: "manual" };
+    expect(applyTranscript(manual, sung("something else entirely sung here today", 3), log)).toBe(manual);
+  });
 });
 
 describe("addTimedLyrics", () => {

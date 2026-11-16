@@ -1,13 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../env.js", () => ({
-  env: {
+const { mockEnv, mockTab4u } = vi.hoisted(() => ({
+  mockEnv: {
     LRCLIB_BASE_URL: "https://lrclib.test",
     LRCLIB_TIMEOUT_MS: 1_000,
     LRCLIB_MIN_INTERVAL_MS: 0,
     LRCLIB_MAX_RETRIES: 2,
     LYRICS_OVH_TIMEOUT_MS: 1_000,
+    LYRICS_TAB4U_ENABLED: false,
   },
+  mockTab4u: vi.fn(),
+}));
+
+vi.mock("../env.js", () => ({ env: mockEnv }));
+vi.mock("./tab4u.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./tab4u.js")>()),
+  lookupTab4u: mockTab4u,
 }));
 
 import { artistMatches, fetchLyrics, pickBestEntry, retryDelayMs } from "./lyrics.js";
@@ -38,6 +46,8 @@ const silent = () => undefined;
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  mockTab4u.mockReset();
+  mockEnv.LYRICS_TAB4U_ENABLED = false;
 });
 
 describe("pickBestEntry", () => {
@@ -236,5 +246,68 @@ describe("fetchLyrics", () => {
     stubFetch((url) => (url.hostname === "api.lyrics.ovh" ? json({ lyrics: PLAIN }) : json({}, 404)));
     const result = await fetchLyrics(song, silent);
     expect(result).toMatchObject({ source: "ovh", plainLyrics: PLAIN, missReason: null });
+  });
+});
+
+describe("fetchLyrics Tab4U stage", () => {
+  const hebrewSong = { title: "נופיה - פרח", artist: "Nofia", durationSeconds: 164 };
+  const TAB4U_TEXT = "שורת בדיקה\nשורה נוספת";
+  const tab4uHit = { kind: "hit", lyrics: TAB4U_TEXT, query: 'tab4u search q="נופיה פרח" -> tab4u song "נופיה ידידיה" / "פרח"' };
+
+  function lrclibAnd(lrclib: (url: URL) => Response) {
+    return stubFetch((url) => (url.hostname === "api.lyrics.ovh" ? json({ lyrics: PLAIN }) : lrclib(url)));
+  }
+
+  it("runs after an LRCLIB miss for Hebrew songs and before lyrics.ovh", async () => {
+    mockEnv.LYRICS_TAB4U_ENABLED = true;
+    mockTab4u.mockResolvedValue(tab4uHit);
+    const calls = lrclibAnd(() => json({}, 404));
+    const result = await fetchLyrics(hebrewSong, silent);
+    expect(result).toMatchObject({ source: "tab4u", plainLyrics: TAB4U_TEXT, syncedLyrics: null, missReason: null });
+    expect(result.matchedQuery).toContain("tab4u");
+    expect(mockTab4u).toHaveBeenCalledTimes(1);
+    expect(calls.some((c) => c.hostname === "api.lyrics.ovh")).toBe(false);
+  });
+
+  it("prefers LRCLIB plain lyrics and never asks Tab4U then", async () => {
+    mockEnv.LYRICS_TAB4U_ENABLED = true;
+    lrclibAnd((url) => (url.pathname === "/api/get" ? json({}, 404) : json([{ duration: 164, plainLyrics: PLAIN }])));
+    const result = await fetchLyrics(hebrewSong, silent);
+    expect(result.source).toBe("lrclib_plain");
+    expect(mockTab4u).not.toHaveBeenCalled();
+  });
+
+  it("is skipped for songs without Hebrew letters", async () => {
+    mockEnv.LYRICS_TAB4U_ENABLED = true;
+    lrclibAnd(() => json({}, 404));
+    const result = await fetchLyrics({ title: "Artist - Song", artist: "Artist", durationSeconds: 200 }, silent);
+    expect(result.source).toBe("ovh");
+    expect(mockTab4u).not.toHaveBeenCalled();
+  });
+
+  it("is skipped when the env switch is off", async () => {
+    lrclibAnd(() => json({}, 404));
+    expect((await fetchLyrics(hebrewSong, silent)).source).toBe("ovh");
+    expect(mockTab4u).not.toHaveBeenCalled();
+  });
+
+  it("falls through to lyrics.ovh on a Tab4U miss and keeps its failure as the miss reason", async () => {
+    mockEnv.LYRICS_TAB4U_ENABLED = true;
+    mockTab4u.mockResolvedValue({ kind: "miss", failure: "rate_limited" });
+    lrclibAnd(() => json({}, 404));
+    expect((await fetchLyrics(hebrewSong, silent)).source).toBe("ovh");
+    stubFetch(() => json({}, 404));
+    expect(await fetchLyrics(hebrewSong, silent)).toMatchObject({ source: "none", missReason: "rate_limited" });
+  });
+
+  it("passes the remaining lookup deadline to Tab4U", async () => {
+    mockEnv.LYRICS_TAB4U_ENABLED = true;
+    mockTab4u.mockResolvedValue({ kind: "miss", failure: null });
+    stubFetch(() => json({}, 404));
+    const before = Date.now();
+    await fetchLyrics(hebrewSong, silent, 30_000);
+    const deadlineAt = mockTab4u.mock.calls[0][1] as number;
+    expect(deadlineAt).toBeGreaterThanOrEqual(before + 30_000);
+    expect(deadlineAt).toBeLessThanOrEqual(Date.now() + 30_000);
   });
 });

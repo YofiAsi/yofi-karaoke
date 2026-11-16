@@ -39,6 +39,12 @@ const EnvSchema = z
     LRCLIB_MIN_INTERVAL_MS: z.coerce.number().int().nonnegative().default(1_000),
     LRCLIB_MAX_RETRIES: z.coerce.number().int().nonnegative().default(2),
     LYRICS_OVH_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+    LYRICS_TAB4U_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
+    TAB4U_TIMEOUT_MS: z.coerce.number().int().positive().default(8_000),
+    TAB4U_MIN_INTERVAL_MS: z.coerce.number().int().nonnegative().default(2_000),
     TRANSCRIBE_BACKEND: z.enum(["cuda", "none"]).default("none"),
     TRANSCRIBE_PY_PATH: z.string().default(DEFAULT_TRANSCRIBE_PY),
     WHISPER_MODEL_DIR: z.string().min(1).optional(),
