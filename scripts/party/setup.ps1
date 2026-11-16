@@ -10,7 +10,10 @@ param(
 
 $ResolvedData = Resolve-DataDir $DataDir
 $Paths = Get-PartyPaths $ResolvedData (Resolve-ToolsDir $ToolsDir $ResolvedData)
-$Requirements = Join-Path $RepoRoot "apps\worker\python\requirements.nvidia.txt"
+$PythonDir = Join-Path $RepoRoot "apps\worker\python"
+$Requirements = Join-Path $PythonDir "requirements.nvidia.txt"
+$TranscribeRequirements = Join-Path $PythonDir "requirements.transcribe.txt"
+$TranscribeOverrides = Join-Path $PythonDir "transcribe-overrides.txt"
 $PostgresZipUrl = "https://get.enterprisedb.com/postgresql/postgresql-17.11-1-windows-x64-binaries.zip"
 
 function Install-Uv {
@@ -45,6 +48,27 @@ function Install-Requirements([string]$Uv) {
         "--index-strategy", "unsafe-best-match",
         "-r", $Requirements
     )
+}
+
+function Install-TranscribeRequirements([string]$Uv) {
+    Write-Step "Installing faster-whisper for automatic lyrics (keeps onnxruntime-gpu in place)"
+    Invoke-Checked $Uv @(
+        "pip", "install",
+        "--python", $Paths.VenvPython,
+        "-r", $TranscribeRequirements,
+        "--overrides", $TranscribeOverrides
+    )
+}
+
+function Install-WhisperModels {
+    Write-Step "Fetching the Whisper models into $($Paths.Models) (about 3.2 GB on the first run)"
+    $env:HF_HUB_DISABLE_TELEMETRY = "1"
+    Invoke-Checked $Paths.VenvPython @((Join-Path $PythonDir "fetch_whisper_models.py"), "--model-dir", $Paths.Models)
+}
+
+function Test-WhisperGpu {
+    Write-Step "Checking that both Whisper models run on CUDA"
+    Invoke-Checked $Paths.VenvPython @((Join-Path $PythonDir "ct2_probe.py"), "--model-dir", $Paths.Models)
 }
 
 function Use-ProvidedPostgres([string]$Bin) {
@@ -88,7 +112,7 @@ function Install-PostgresServer {
 
 function Test-GpuProvider {
     Write-Step "Checking that onnxruntime sees the CUDA provider"
-    $check = Join-Path $RepoRoot "apps\worker\python\cuda_probe.py"
+    $check = Join-Path $PythonDir "cuda_probe.py"
     Invoke-Checked $Paths.VenvPython @($check)
 }
 
@@ -99,7 +123,10 @@ Set-UvEnvironment $Paths
 $uv = Get-Uv
 New-Venv $uv
 Install-Requirements $uv
+Install-TranscribeRequirements $uv
 Test-GpuProvider
+Install-WhisperModels
+Test-WhisperGpu
 Install-PostgresServer
 if (-not (Find-PostgresBin $Paths)) { Stop-WithError "Python setup is done, PostgreSQL is still missing (see above)" }
 Write-Step "Setup complete. Data directory: $($Paths.Data)"
