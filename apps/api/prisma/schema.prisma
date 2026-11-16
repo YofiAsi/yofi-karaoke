@@ -31,6 +31,11 @@ model Song {
   lyricsLrc             String?         @db.Text
   lyricsPlain           String?         @db.Text
   lyricsSource          String?
+  lyricsMissReason      String?
+  lyricsOffsetMs        Int             @default(0)
+  track                 String?
+  trackArtist           String?
+  album                 String?
   createdAt             DateTime        @default(now())
   queueItems            QueueItem[]
   processingJobs        ProcessingJob[]
