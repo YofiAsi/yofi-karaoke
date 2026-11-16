@@ -61,6 +61,8 @@ See [`docs/phase-1-smoke-test.md`](docs/phase-1-smoke-test.md) for the end-to-en
 * **Search limits**: YouTube search results are cached per query for 10 minutes, at most 2 yt-dlp searches run at once, identical searches share one process, and each guest gets 20 uncached searches per minute (429 `rate_limited` beyond that).
 * **Queue limit**: a guest may have at most `MAX_ACTIVE_ITEMS_PER_USER` songs queued, processing or ready at once (default 5, the host is exempt). Adding more answers 409 `queue_limit`.
 * **Install**: the web app ships a manifest and icons, so guests can add it to their home screen.
+* **Automatic lyrics** (party mode, `TRANSCRIBE_BACKEND=cuda`): when LRCLIB has nothing, the worker transcribes the vocals stem with Whisper on the GPU (the ivrit.ai Hebrew model for Hebrew titles, the multilingual turbo model otherwise) and stores the lines with source `whisper`; the lyrics view can label them as automatic. When LRCLIB has only plain text, the transcript is used just for timing: every plain line gets a start time by matching its words in order, the words stay exactly as written, and the source becomes `aligned`. Synced LRCLIB lyrics are never replaced, and a failed or rejected attempt keeps whatever lyrics existed. "Find lyrics again" and `POST /api/songs/lyrics/refetch-missing` run the same fallback for songs that are already processed.
+* **Paste lyrics**: the host can paste lyrics for the current song from the host controls (up to 10000 characters, source `manual`). They show as plain text at once and switch to synced lines when the alignment with the vocals succeeds a few seconds later.
 
 ## Party mode (native Windows with an NVIDIA GPU)
 
@@ -79,7 +81,7 @@ Runs the whole stack on one Windows PC without Docker, using the GPU for separat
 powershell -ExecutionPolicy Bypass -File scripts\party\setup.ps1 -DownloadPostgres
 ```
 
-This installs `uv` into the data directory if it is not on `PATH`, a private Python 3.12, a venv with PyTorch for CUDA 12.8, onnxruntime-gpu, audio-separator and yt-dlp, then checks that onnxruntime really runs on the CUDA execution provider. Nothing touches the system Python, `PATH`, services or the firewall. For Postgres pick one:
+This installs `uv` into the data directory if it is not on `PATH`, a private Python 3.12, a venv with PyTorch for CUDA 12.8, onnxruntime-gpu, audio-separator and yt-dlp, then checks that onnxruntime really runs on the CUDA execution provider. It also installs faster-whisper (about 150 MB of packages, installed with an override that keeps the CPU onnxruntime wheel from replacing onnxruntime-gpu), downloads the two Whisper models (about 3.2 GB) and checks that both run on CUDA. Nothing touches the system Python, `PATH`, services or the firewall. For Postgres pick one:
 
 * `-DownloadPostgres` fetches the official EDB binaries zip (about 325 MB) into the data directory.
 * `-PostgresBin "C:\path\to\pgsql\bin"` uses a server install you already have; the path is remembered.
@@ -110,7 +112,7 @@ Everything is under `%LOCALAPPDATA%\yofi-karaoke` (override with `-DataDir` or `
 | Folder | Contents |
 | --- | --- |
 | `uv`, `python`, `venv`, `cache` | uv, the private Python, the GPU venv and the uv download cache (the venv hardlinks into the cache, so deleting `cache` frees little) |
-| `models` | the separation model, fetched on the first song |
+| `models` | the separation model, fetched on the first song, and the Whisper models `whisper-ivrit-turbo` and `whisper-turbo` (1.6 GB each), fetched by setup |
 | `pgsql` | PostgreSQL server binaries when downloaded by setup |
 | `postgres` | the private database cluster |
 | `stems` | `instrumentals/<songId>.mp3` and `vocals/<songId>.mp3` |
@@ -123,6 +125,8 @@ To wipe the songs and the database but keep the tools, stop party mode and delet
 ### Expected time per song
 
 Measured on the RTX 5090 with 3.5 minute songs: about 31 to 36 s per song from start to ready, of which separation is about 21 s and the rest is the YouTube download and the lyrics lookup. Songs are processed one at a time, so a second song queued at the same moment is ready about a minute later. The very first song after setup takes about 80 s longer because the model is downloaded and the GPU kernels are compiled once.
+
+Songs without synced LRCLIB lyrics take 4 to 13 s longer for transcription (measured on five songs of 2.7 to 5.7 minutes, about 2.7 GB of VRAM while it runs); songs with synced lyrics take no extra time. Whisper lines are good for English and usable for Hebrew; alignment of plain lyrics is the more reliable path. `apps/worker/src/scripts/timedLyricsCheck.ts` compares both against LRCLIB synced lyrics for a transcript.
 
 ## Deployment (Dokploy)
 
