@@ -62,6 +62,68 @@ See [`docs/phase-1-smoke-test.md`](docs/phase-1-smoke-test.md) for the end-to-en
 * **Queue limit**: a guest may have at most `MAX_ACTIVE_ITEMS_PER_USER` songs queued, processing or ready at once (default 5, the host is exempt). Adding more answers 409 `queue_limit`.
 * **Install**: the web app ships a manifest and icons, so guests can add it to their home screen.
 
+## Party mode (native Windows with an NVIDIA GPU)
+
+Runs the whole stack on one Windows PC without Docker, using the GPU for separation. Guests on the same WiFi open the LAN address; remote guests use a Cloudflare quick tunnel.
+
+### What it needs
+
+* Windows 10 or 11 with an NVIDIA GPU and a current driver (tested on an RTX 5090, driver 616.92).
+* Node.js 20 or newer (corepack ships with it), ffmpeg and git on `PATH`.
+* PostgreSQL server binaries. An install with only the "Command Line Tools" component is not enough, because `initdb` needs the server `share` folder.
+* Optional for remote guests: `cloudflared`.
+
+### Setup (once)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\party\setup.ps1 -DownloadPostgres
+```
+
+This installs `uv` into the data directory if it is not on `PATH`, a private Python 3.12, a venv with PyTorch for CUDA 12.8, onnxruntime-gpu, audio-separator and yt-dlp, then checks that onnxruntime really runs on the CUDA execution provider. Nothing touches the system Python, `PATH`, services or the firewall. For Postgres pick one:
+
+* `-DownloadPostgres` fetches the official EDB binaries zip (about 325 MB) into the data directory.
+* `-PostgresBin "C:\path\to\pgsql\bin"` uses a server install you already have; the path is remembered.
+
+First setup downloads about 4 GB. Rerunning it is quick and safe.
+
+### Start and stop
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\party\start.ps1
+powershell -ExecutionPolicy Bypass -File scripts\party\start.ps1 -Tunnel
+```
+
+The first start asks for the host PIN once and stores it with a generated `SESSION_SECRET`. Each start checks prerequisites, starts a private Postgres cluster on `127.0.0.1:54329` (trust auth, localhost only, separate from any Postgres service on the PC), applies migrations, rebuilds when the checkout changed, then starts api (`127.0.0.1:4100`), worker and web (`0.0.0.0:3000`) and prints the addresses. `-Tunnel` also starts `cloudflared tunnel --url http://localhost:3000` and prints the public `trycloudflare.com` URL; it changes on every start. Ports can be changed with `-WebPort`, `-ApiPort` and `-PgPort`.
+
+Press Ctrl+C to stop everything, Postgres included. After a crash or a closed window run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\party\stop.ps1
+```
+
+The first time web listens on the network, Windows Defender Firewall asks whether to allow Node.js. Allow it on private networks or guests on the WiFi cannot connect; the scripts never change firewall rules.
+
+### Where data lives
+
+Everything is under `%LOCALAPPDATA%\yofi-karaoke` (override with `-DataDir` or `YOFI_DATA_DIR`):
+
+| Folder | Contents |
+| --- | --- |
+| `uv`, `python`, `venv`, `cache` | uv, the private Python, the GPU venv and the uv download cache |
+| `models` | the separation model, fetched on the first song |
+| `pgsql` | PostgreSQL server binaries when downloaded by setup |
+| `postgres` | the private database cluster |
+| `stems` | `instrumentals/<songId>.mp3` and `vocals/<songId>.mp3` |
+| `tmp` | worker downloads, removed after each song |
+| `secrets` | `host-pin.txt` and `session-secret.txt` |
+| `logs\<start time>` | one log per process for every start |
+
+To wipe the songs and the database but keep the tools, stop party mode and delete `postgres`, `stems` and `tmp`. To forget the PIN delete `secrets\host-pin.txt`. To remove everything delete the whole folder. `-ToolsDir` (or `YOFI_TOOLS_DIR`) points at a separate folder for the tools, which lets a throwaway data directory reuse an existing venv.
+
+### Expected time per song
+
+Measured on the RTX 5090 with a 3.5 minute song: separation takes 20 to 24 s, and the YouTube download about 10 s, so a song is usually ready well under a minute after it is queued. The very first song after setup takes about 80 s longer because the model is downloaded and the GPU kernels are compiled once.
+
 ## Deployment (Dokploy)
 
 Production uses **[`docker-compose.yml`](docker-compose.yml)** only (Intel/OpenVINO). **Do not** add Traefik or TLS configuration to the repo — configure the hostname and HTTPS in the **Dokploy UI**; Dokploy’s edge handles certificates.

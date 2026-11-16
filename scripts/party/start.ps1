@@ -142,6 +142,8 @@ function Invoke-BuildIfStale {
     try {
         Write-Step "Building shared, api, worker and web (takes a minute or two)"
         $env:API_INTERNAL_URL = $ApiUrl
+        $env:NEXT_PUBLIC_API_URL = "/api"
+        $env:NEXT_PUBLIC_WS_URL = "same-origin"
         Invoke-Pnpm @("--filter", "@karaoke/shared", "build")
         Invoke-Pnpm @("--filter", "api", "build")
         Invoke-Pnpm @("--filter", "worker", "build")
