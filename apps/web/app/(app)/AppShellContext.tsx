@@ -19,6 +19,7 @@ export interface AppShellState {
   lrcLines: LrcLine[];
   plainLyrics: string | null;
   lyricsOffsetMs: number;
+  lyricsSource?: string | null;
   setLyricsOffsetMs: (offsetMs: number) => void;
   audioPosition: number | null;
   setAudioPosition: (pos: number) => void;

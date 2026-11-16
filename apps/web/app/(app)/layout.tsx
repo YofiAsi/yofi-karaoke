@@ -25,6 +25,7 @@ interface LyricsResponse {
   lrc: string | null;
   plain: string | null;
   offsetMs?: number;
+  source?: string | null;
 }
 
 function toLyricsState({ lrc, plain }: LyricsResponse) {
@@ -46,6 +47,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const [audioPosition, setAudioPosition] = useState<number | null>(null);
   const [lyricsVersion, setLyricsVersion] = useState(0);
   const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
+  const [lyricsSource, setLyricsSource] = useState<string | null>(null);
   const clock = usePositionClock();
   const [failedVocalsSongId, setFailedVocalsSongId] = useState<string | null>(null);
 
@@ -159,6 +161,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       setLrcLines([]);
       setPlainLyrics(null);
       setLyricsOffsetMs(0);
+      setLyricsSource(null);
       return;
     }
     api
@@ -168,10 +171,12 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         setLrcLines(lines);
         setPlainLyrics(plain);
         setLyricsOffsetMs(res.offsetMs ?? 0);
+        setLyricsSource(res.source ?? null);
       })
       .catch(() => {
         setLrcLines([]);
         setPlainLyrics(null);
+        setLyricsSource(null);
       });
   }, [currentSong?.id, currentSong?.hasLyrics, lyricsVersion]);
 
@@ -193,6 +198,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         lrcLines,
         plainLyrics,
         lyricsOffsetMs,
+        lyricsSource,
         setLyricsOffsetMs,
         audioPosition: isPlayer ? audioPosition : null,
         setAudioPosition,

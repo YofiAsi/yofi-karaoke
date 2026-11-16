@@ -63,7 +63,7 @@ function UpNextList({ items }: { items: QueueItem[] }) {
 }
 
 export default function TvPage() {
-  const { queue, playbackState, lrcLines, plainLyrics, lyricsOffsetMs, audioPosition, positionClock } =
+  const { queue, playbackState, lrcLines, plainLyrics, lyricsOffsetMs, lyricsSource, audioPosition, positionClock } =
     useAppShell();
   const current = queue?.current ?? null;
   const upcoming = queue?.upcoming ?? [];
@@ -80,6 +80,7 @@ export default function TvPage() {
                 positionSeconds={audioPosition ?? playbackState?.positionSeconds ?? 0}
                 plainText={plainLyrics ?? undefined}
                 offsetMs={lyricsOffsetMs}
+                source={lyricsSource}
                 clock={positionClock}
                 durationSeconds={current.song.durationSeconds}
                 expandToFill

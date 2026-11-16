@@ -15,6 +15,7 @@ interface HostControlsProps {
 }
 
 const OFFSET_STEP_MS = 500;
+const SEEK_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]);
 
 function formatOffset(offsetMs: number): string {
   const seconds = (offsetMs / 1000).toFixed(1);
@@ -140,6 +141,9 @@ export function HostControls({
           onChange={(e) => setSeekValue(Number(e.target.value))}
           onMouseUp={(e) => handleSeekCommit(Number((e.target as HTMLInputElement).value))}
           onTouchEnd={(e) => handleSeekCommit(Number((e.target as HTMLInputElement).value))}
+          onKeyUp={(e) => {
+            if (SEEK_KEYS.has(e.key)) handleSeekCommit(Number(e.currentTarget.value));
+          }}
           className="w-full accent-white"
           aria-label="Seek"
         />

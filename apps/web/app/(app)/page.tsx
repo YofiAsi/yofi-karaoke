@@ -20,6 +20,7 @@ export default function HomePage() {
     lrcLines,
     plainLyrics,
     lyricsOffsetMs,
+    lyricsSource,
     setLyricsOffsetMs,
     audioPosition,
     refetchQueue,
@@ -97,6 +98,7 @@ export default function HomePage() {
             positionSeconds={audioPosition ?? playbackState?.positionSeconds ?? 0}
             plainText={plainLyrics ?? undefined}
             offsetMs={lyricsOffsetMs}
+            source={lyricsSource}
             clock={positionClock}
             durationSeconds={current.song.durationSeconds}
             expandToFill
