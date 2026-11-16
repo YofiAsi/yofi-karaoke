@@ -44,6 +44,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const [lyricsVersion, setLyricsVersion] = useState(0);
   const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
   const clock = usePositionClock();
+  const [failedVocalsSongId, setFailedVocalsSongId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -187,6 +188,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         setAudioPosition,
         refetchQueue: fetchQueue,
         positionClock: isPlayer ? null : clock.clock,
+        failedVocalsSongId,
       }}
     >
       <PlayerToggle
@@ -195,6 +197,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         source={audioSource}
         playbackState={playbackState}
         onTick={setAudioPosition}
+        onVocalsFailed={setFailedVocalsSongId}
       />
       {children}
       <nav

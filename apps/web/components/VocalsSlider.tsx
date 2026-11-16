@@ -9,6 +9,7 @@ import {
   VOCALS_SEND_INTERVAL_MS,
   VOCALS_SETTLE_MS,
   acceptsServerGain,
+  vocalsUnavailableText,
   vocalsValueText,
   type LocalSend,
 } from "@/lib/vocalsSlider";
@@ -17,6 +18,7 @@ interface VocalsSliderProps {
   queueItemId: string;
   hasVocals: boolean;
   serverGain: number;
+  failed?: boolean;
 }
 
 function useLatest<T>(value: T) {
@@ -92,11 +94,12 @@ function useSharedGain(queueItemId: string, serverGain: number) {
   return { value, startDrag, change, release };
 }
 
-export function VocalsSlider({ queueItemId, hasVocals, serverGain }: VocalsSliderProps) {
+export function VocalsSlider({ queueItemId, hasVocals, serverGain, failed = false }: VocalsSliderProps) {
   const inputId = useId();
   const hintId = useId();
   const { value, startDrag, change, release } = useSharedGain(queueItemId, serverGain);
-  const shownValue = hasVocals ? value : 0;
+  const unavailable = vocalsUnavailableText(hasVocals, failed);
+  const shownValue = unavailable ? 0 : value;
 
   return (
     <div className="mt-4 rounded-2xl bg-neutral-800 border border-neutral-700 px-4 py-3">
@@ -115,17 +118,17 @@ export function VocalsSlider({ queueItemId, hasVocals, serverGain }: VocalsSlide
         max={1}
         step={0.05}
         value={shownValue}
-        disabled={!hasVocals}
+        disabled={!!unavailable}
         aria-valuetext={vocalsValueText(shownValue)}
-        aria-describedby={hasVocals ? undefined : hintId}
+        aria-describedby={unavailable ? hintId : undefined}
         onPointerDown={startDrag}
         onChange={(e) => change(Number(e.target.value))}
         onBlur={release}
         className="w-full h-11 accent-white disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
       />
-      {!hasVocals && (
+      {unavailable && (
         <p id={hintId} className="text-xs text-neutral-500">
-          This song has no separate vocals track, so only the instrumental plays.
+          {unavailable}
         </p>
       )}
     </div>
