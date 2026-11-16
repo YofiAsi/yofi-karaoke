@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { KaraokeLine } from "./karaokeLines";
 import { fillStyle, lineDirection, lineFills, wordDirection, wordFill } from "./karaokeFill";
-import { lyricsTime, readLivePosition } from "./livePosition";
+import { fillTime, lyricsTime, readLivePosition } from "./livePosition";
 import { LOOKAHEAD_SECONDS } from "./lyricsTiming";
 import { clockFromState, type PositionClock } from "./positionClock";
 
@@ -65,7 +65,7 @@ describe("fill across playback", () => {
 
   function fillAt(clock: PositionClock, nowMs: number): number[] {
     const position = readLivePosition({ clock, reader: null, fallbackSeconds: 0 }, nowMs);
-    return lineFills(LINE, lyricsTime(position, 0) - LOOKAHEAD_SECONDS);
+    return lineFills(LINE, fillTime(position, 0));
   }
 
   it("advances with the clock while playing", () => {
@@ -91,7 +91,13 @@ describe("fill across playback", () => {
     expect(readLivePosition({ clock: null, reader: null, fallbackSeconds: 7 }, 0)).toBe(7);
   });
 
-  it("applies the lookahead and the host offset", () => {
+  it("fills words at the sung time with the host offset and no lookahead", () => {
+    expect(fillTime(10, 0)).toBe(10);
+    expect(fillTime(10, 1000)).toBe(9);
+    expect(lineFills(LINE, fillTime(10.5, 0))).toEqual([0.5, 0]);
+  });
+
+  it("applies the lookahead and the host offset to line choice", () => {
     expect(lyricsTime(10, 0)).toBeCloseTo(10 + LOOKAHEAD_SECONDS);
     expect(lyricsTime(10, 1000)).toBeCloseTo(9 + LOOKAHEAD_SECONDS);
   });

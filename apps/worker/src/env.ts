@@ -52,6 +52,7 @@ const EnvSchema = z
     TRANSCRIBE_BACKEND: z.enum(["cuda", "none"]).default("none"),
     WHISPER_MODEL_DIR: z.string().min(1).optional(),
     TRANSCRIBE_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
+    WORD_TIMINGS_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(30_000),
   })
   .superRefine(requireDriverSettings);
 

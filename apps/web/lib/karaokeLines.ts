@@ -22,6 +22,10 @@ export interface KaraokeLine {
 
 export const splitWords = splitLyricWords;
 
+export function hasSungLines(lines: readonly LrcLine[]): boolean {
+  return lines.some((line) => splitWords(line.text).length > 0);
+}
+
 function charCount(text: string): number {
   return [...text.replace(/\s+/g, "")].length;
 }

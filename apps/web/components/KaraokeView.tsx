@@ -7,7 +7,7 @@ import type { LrcLine } from "@/lib/lrc";
 import { buildKaraokeLines, type KaraokeLine } from "@/lib/karaokeLines";
 import { COUNTDOWN_DOTS, countdownDots, slotContents, type SlotContent } from "@/lib/karaokeSlots";
 import { fillStyle, lineDirection, lineFills, wordDirection } from "@/lib/karaokeFill";
-import { lyricsTime, type PlayerPositionReader } from "@/lib/livePosition";
+import { fillTime, lyricsTime, type PlayerPositionReader } from "@/lib/livePosition";
 import type { PositionClock } from "@/lib/positionClock";
 import { useLivePosition } from "@/lib/useLivePosition";
 
@@ -132,15 +132,15 @@ export function KaraokeView({
     [lines, wordTimings, durationSeconds],
   );
   const position = useLivePosition({ clock, reader: playerPosition, fallbackSeconds: positionSeconds, durationSeconds });
-  const time = lyricsTime(position, offsetMs);
-  const [upper, lower] = slotContents(karaokeLines, time);
+  const sungAt = fillTime(position, offsetMs);
+  const [upper, lower] = slotContents(karaokeLines, lyricsTime(position, offsetMs));
 
   return (
     <div className="flex-1 min-h-0 flex flex-col items-stretch justify-center" style={{ fontSize: SLOT_FONT[size] }}>
-      <Countdown dots={countdownDots(karaokeLines, time)} />
-      <Slot content={upper} lines={karaokeLines} time={time} />
+      <Countdown dots={countdownDots(karaokeLines, sungAt)} />
+      <Slot content={upper} lines={karaokeLines} time={sungAt} />
       <div className="h-[0.35em] shrink-0" />
-      <Slot content={lower} lines={karaokeLines} time={time} />
+      <Slot content={lower} lines={karaokeLines} time={sungAt} />
     </div>
   );
 }

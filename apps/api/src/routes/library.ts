@@ -8,6 +8,7 @@ import { requireCurrentHost } from "../auth/requireCurrentHost.js";
 import { enqueueRefetchLyrics } from "../jobs/enqueueRefetchLyrics.js";
 import { notify } from "../playback/notify.js";
 import { queueSong } from "../queue/addition.js";
+import { SONG_VIEW_SELECT, toSongView } from "../queue/queueView.js";
 
 const MISSING_LYRICS_REFETCH_SPACING_MS = 20_000;
 const MAX_LYRICS_OFFSET_MS = 30_000;
@@ -159,22 +160,12 @@ export async function registerLibraryRoutes(app: FastifyInstance): Promise<void>
           orderBy: [{ title: "asc" }, { artist: "asc" }],
           skip: offset,
           take: limit,
+          select: SONG_VIEW_SELECT,
         }),
         prisma.song.count({ where }),
       ]);
 
-      const items = songs.map((s) => ({
-        id: s.id,
-        youtubeVideoId: s.youtubeVideoId,
-        title: s.title,
-        artist: s.artist,
-        channel: s.channel,
-        durationSeconds: s.durationSeconds,
-        thumbnailUrl: s.thumbnailUrl,
-        hasInstrumental: true,
-        hasLyrics: !!(s.lyricsLrc || s.lyricsPlain),
-        hasVocals: !!s.vocalsObjectKey,
-      }));
+      const items = songs.map((s) => ({ ...toSongView(s), hasInstrumental: true }));
 
       return reply.send({ items, total });
     },

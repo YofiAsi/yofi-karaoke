@@ -15,12 +15,31 @@ export interface SlotContent {
 
 export type SlotPair = [SlotContent | null, SlotContent | null];
 
-export function currentLineIndex(lines: readonly KaraokeLine[], time: number): number {
-  let current = -1;
+function lastStartedIndex(lines: readonly KaraokeLine[], time: number): number {
+  let latest = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].start <= time) current = i;
+    if (lines[i].start <= time) latest = i;
   }
-  return current;
+  return latest;
+}
+
+function firstOfStartGroup(lines: readonly KaraokeLine[], index: number): number {
+  let first = index;
+  while (first > 0 && lines[first - 1].start === lines[index].start) first -= 1;
+  return first;
+}
+
+export function currentLineIndex(lines: readonly KaraokeLine[], time: number): number {
+  const latest = lastStartedIndex(lines, time);
+  if (latest < 0) return latest;
+  for (let i = firstOfStartGroup(lines, latest); i < latest; i++) {
+    if (lines[i].end > time) return i;
+  }
+  return latest;
+}
+
+function startsTogether(lines: readonly KaraokeLine[], a: number, b: number): boolean {
+  return b < lines.length && lines[a].start === lines[b].start;
 }
 
 export function gapBefore(lines: readonly KaraokeLine[], index: number): number {
@@ -49,7 +68,10 @@ export function slotContents(lines: readonly KaraokeLine[], time: number): SlotP
   const pivot = pivotIndex(lines, time);
   if (pivot < 0) return slots;
   slots[pivot % 2] = { lineIndex: pivot, role: "current" };
-  if (pivot + 1 < lines.length) slots[(pivot + 1) % 2] = { lineIndex: pivot + 1, role: "next" };
+  if (pivot + 1 < lines.length) {
+    const role = startsTogether(lines, pivot, pivot + 1) ? "current" : "next";
+    slots[(pivot + 1) % 2] = { lineIndex: pivot + 1, role };
+  }
   return slots;
 }
 

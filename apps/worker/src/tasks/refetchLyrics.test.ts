@@ -223,8 +223,8 @@ describe("refetchLyrics task", () => {
     it("clears word timings in the same write that replaces the LRC without a transcript", async () => {
       mockFetchLyrics.mockResolvedValueOnce(synced);
       await refetchLyrics({ songId: "s1" }, helpers);
-      expect(String(mockQuery.mock.calls[1][0])).toContain('"lyricsWordTimings" = $8::jsonb');
-      expect(mockQuery.mock.calls[1][1][7]).toBeNull();
+      expect(String(mockQuery.mock.calls[1][0])).toContain('ELSE $8::jsonb END');
+      expect(mockQuery.mock.calls[1][1].slice(7)).toEqual([null, false]);
     });
 
     it("replaces word timings together with a fresh LRC", async () => {
@@ -247,6 +247,21 @@ describe("refetchLyrics task", () => {
       expect(update[1].slice(0, 5)).toEqual(["s1", "[00:01.00]old", "old", "[00:01.00]old", "old"]);
       expect(savedTimings(update[1][5])).toEqual([{ start: 1, end: 1.5, words: [{ text: "old", start: 1.1, end: 1.5 }] }]);
       expect(mockNotify).toHaveBeenCalledOnce();
+    });
+
+    it("keeps stored word timings when the fresh text is unchanged and no new words were produced", async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [vocalsRow] });
+      mockFetchLyrics.mockResolvedValueOnce({ ...synced, syncedLyrics: row.lyricsLrc, plainLyrics: row.lyricsPlain });
+      await refetchLyrics({ songId: "s1" }, helpers);
+      expect(mockQuery.mock.calls[1][1].slice(7)).toEqual([null, true]);
+    });
+
+    it("survives a database error while refreshing kept lyrics", async () => {
+      const japaneseRow = { ...row, lyricsLrc: "[00:01.00]夢をみた", lyricsPlain: "夢をみた", lyricsSource: "lrclib" };
+      mockQuery.mockResolvedValueOnce({ rows: [japaneseRow] }).mockRejectedValueOnce(new Error("connection reset"));
+      mockFetchLyrics.mockResolvedValueOnce(notFound);
+      await expect(refetchLyrics({ songId: "s1" }, helpers)).resolves.toBeUndefined();
+      expect(mockNotify).not.toHaveBeenCalled();
     });
 
     it("writes nothing for kept lyrics when the transcript times no line", async () => {

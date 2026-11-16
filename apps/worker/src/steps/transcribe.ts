@@ -17,11 +17,16 @@ export function languageHint(...texts: (string | null | undefined)[]): "he" | "a
   return texts.some((text) => text && HEBREW_LETTER.test(text)) ? "he" : "auto";
 }
 
-export async function transcribeVocals(vocalsPath: string, language: "he" | "auto", priority: GpuPriority): Promise<Transcript> {
+export async function transcribeVocals(
+  vocalsPath: string,
+  language: "he" | "auto",
+  priority: GpuPriority,
+  timeoutMs: number = env.TRANSCRIBE_TIMEOUT_MS,
+): Promise<Transcript> {
   const { result, queuedMs, runMs } = await runOnGpu<unknown>(
     "transcribe",
     { input: vocalsPath, language, modelDir: env.WHISPER_MODEL_DIR ?? env.AUDIO_SEP_MODEL_DIR, device: "cuda" },
-    { timeoutMs: env.TRANSCRIBE_TIMEOUT_MS, priority },
+    { timeoutMs, priority },
   );
   return { ...toTranscript(result), wallMs: runMs, queuedMs };
 }

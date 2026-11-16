@@ -24,6 +24,10 @@ export function readLivePosition(sources: LiveSources, nowMs: number): number {
   return sources.fallbackSeconds;
 }
 
+export function fillTime(positionSeconds: number, offsetMs: number): number {
+  return positionSeconds - offsetMs / 1000;
+}
+
 export function lyricsTime(positionSeconds: number, offsetMs: number): number {
-  return positionSeconds + LOOKAHEAD_SECONDS - offsetMs / 1000;
+  return fillTime(positionSeconds, offsetMs) + LOOKAHEAD_SECONDS;
 }

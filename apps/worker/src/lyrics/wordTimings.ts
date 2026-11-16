@@ -1,6 +1,8 @@
 // Times each word of synced lyrics from the transcript: token matching inside the line's window, interpolation for unmatched words.
 import {
   LyricsWordTimingsSchema,
+  MAX_TIMED_WORD_CHARS,
+  MAX_TIMED_WORDS_PER_LINE,
   parseLrc,
   splitLyricWords,
   type LrcLine,
@@ -18,9 +20,20 @@ export const MAX_WORD_SECONDS = 5;
 export const TRAILING_WORD_SECONDS = 0.5;
 
 interface HeardToken {
+  index: number;
   token: string;
   start: number;
   end: number;
+}
+
+interface WordMatch {
+  spans: (Span | null)[];
+  used: number[];
+}
+
+interface LineResult {
+  line: TimedLine;
+  used: number[];
 }
 
 interface Span {
@@ -38,11 +51,12 @@ function roundMs(value: number): number {
 }
 
 export function heardTokens(words: readonly TranscriptWord[]): HeardToken[] {
-  return words.flatMap((word) => {
-    const tokens = tokenize(word.text);
-    const step = Math.max(0, word.end - word.start) / Math.max(1, tokens.length);
-    return tokens.map((token, k) => ({ token, start: word.start + step * k, end: word.start + step * (k + 1) }));
+  const tokens = words.flatMap((word) => {
+    const parts = tokenize(word.text);
+    const step = Math.max(0, word.end - word.start) / Math.max(1, parts.length);
+    return parts.map((token, k) => ({ token, start: word.start + step * k, end: word.start + step * (k + 1) }));
   });
+  return tokens.map((token, index) => ({ ...token, index }));
 }
 
 export function lineWindows(lines: readonly LrcLine[], durationSeconds?: number): LineWindow[] {
@@ -54,23 +68,28 @@ export function lineWindows(lines: readonly LrcLine[], durationSeconds?: number)
   });
 }
 
-function tokensInWindow(heard: readonly HeardToken[], window: LineWindow): HeardToken[] {
-  return heard.filter((token) => token.start >= window.start - WINDOW_LEAD_SECONDS && token.start < window.end);
+function tokensInWindow(heard: readonly HeardToken[], window: LineWindow, used: ReadonlySet<number>): HeardToken[] {
+  return heard.filter(
+    (token) => !used.has(token.index) && token.start >= window.start - WINDOW_LEAD_SECONDS && token.start < window.end,
+  );
 }
 
 function widen(span: Span | null, token: HeardToken): Span {
   return span ? { start: Math.min(span.start, token.start), end: Math.max(span.end, token.end) } : { start: token.start, end: token.end };
 }
 
-export function matchWords(words: readonly string[], heard: readonly HeardToken[]): (Span | null)[] {
+export function matchWords(words: readonly string[], heard: readonly HeardToken[]): WordMatch {
   const refs = words.flatMap((word, index) => tokenize(word).map((token) => ({ token, index })));
   const matches = matchTokens(refs.map((ref) => ref.token), heard.map((token) => token.token));
   const spans: (Span | null)[] = words.map(() => null);
+  const used: number[] = [];
   refs.forEach((ref, i) => {
     const heardIndex = matches.get(i);
-    if (heardIndex !== undefined) spans[ref.index] = widen(spans[ref.index], heard[heardIndex]);
+    if (heardIndex === undefined) return;
+    spans[ref.index] = widen(spans[ref.index], heard[heardIndex]);
+    used.push(heard[heardIndex].index);
   });
-  return spans;
+  return { spans, used };
 }
 
 function charWeight(word: string): number {
@@ -128,19 +147,44 @@ function untimedLine(line: LrcLine, window: LineWindow): TimedLine {
   return { start: line.time, end: roundMs(Math.max(line.time, Math.min(window.end, line.time + LAST_LINE_SECONDS))), words: [] };
 }
 
-function isUsable(spans: readonly (Span | null)[]): boolean {
+function isUsable(words: readonly string[], spans: readonly (Span | null)[]): boolean {
+  const matchable = words.filter((word) => tokenize(word).length > 0).length;
   const matched = spans.filter(Boolean).length;
-  return matched > 0 && matched / spans.length >= MIN_LINE_MATCH_FRACTION;
+  return matched > 0 && matched / matchable >= MIN_LINE_MATCH_FRACTION;
 }
 
-export function timeLine(line: LrcLine, window: LineWindow, heard: readonly HeardToken[]): TimedLine {
+export function exceedsStoredLimits(words: readonly string[]): boolean {
+  return words.length > MAX_TIMED_WORDS_PER_LINE || words.some((word) => word.length > MAX_TIMED_WORD_CHARS);
+}
+
+function untimedResult(line: LrcLine, window: LineWindow): LineResult {
+  return { line: untimedLine(line, window), used: [] };
+}
+
+export function timeLine(
+  line: LrcLine,
+  window: LineWindow,
+  heard: readonly HeardToken[],
+  used: ReadonlySet<number> = new Set(),
+): LineResult {
   const words = splitLyricWords(line.text);
-  if (words.length === 0) return { start: line.time, end: line.time, words: [] };
-  const spans = matchWords(words, tokensInWindow(heard, window));
-  if (!isUsable(spans)) return untimedLine(line, window);
-  const settled = settleSpans(interpolateUnmatched(words, spans, window), window);
+  if (words.length === 0) return { line: { start: line.time, end: line.time, words: [] }, used: [] };
+  if (exceedsStoredLimits(words)) return untimedResult(line, window);
+  const match = matchWords(words, tokensInWindow(heard, window, used));
+  if (!isUsable(words, match.spans)) return untimedResult(line, window);
+  const settled = settleSpans(interpolateUnmatched(words, match.spans, window), window);
   const timedWords: TimedWord[] = words.map((text, i) => ({ text, ...settled[i] }));
-  return { start: line.time, end: Math.max(line.time, settled[settled.length - 1].end), words: timedWords };
+  const end = Math.max(line.time, settled[settled.length - 1].end);
+  return { line: { start: line.time, end, words: timedWords }, used: match.used };
+}
+
+function timeAllLines(lines: readonly LrcLine[], windows: readonly LineWindow[], heard: readonly HeardToken[]): TimedLine[] {
+  const used = new Set<number>();
+  return lines.map((line, i) => {
+    const result = timeLine(line, windows[i], heard, used);
+    result.used.forEach((index) => used.add(index));
+    return result.line;
+  });
 }
 
 export function buildWordTimings(
@@ -150,9 +194,7 @@ export function buildWordTimings(
 ): LyricsWordTimings | null {
   const lines = parseLrc(lrc);
   if (lines.length === 0 || transcript.length === 0) return null;
-  const heard = heardTokens(transcript);
-  const windows = lineWindows(lines, durationSeconds);
-  const timings = lines.map((line, i) => timeLine(line, windows[i], heard));
+  const timings = timeAllLines(lines, lineWindows(lines, durationSeconds), heardTokens(transcript));
   if (!timings.some((line) => line.words.length > 0)) return null;
   return LyricsWordTimingsSchema.parse(timings);
 }

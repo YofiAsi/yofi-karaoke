@@ -3,6 +3,7 @@ import type { LyricsWordTimings } from "@karaoke/shared";
 import {
   MAX_ESTIMATED_SECONDS_PER_CHAR,
   buildKaraokeLines,
+  hasSungLines,
   estimateWords,
   estimatedLineEnd,
   timingsMatchLines,
@@ -116,5 +117,12 @@ describe("buildKaraokeLines", () => {
   it("bounds the last line by the song duration", () => {
     const lines = buildKaraokeLines([{ time: 100, text: "a very long closing line indeed" }], null, 102);
     expect(lines[0].end).toBeCloseTo(101.8);
+  });
+});
+
+describe("hasSungLines", () => {
+  it("is false for an LRC whose lines are all empty", () => {
+    expect(hasSungLines([{ time: 1, text: "" }, { time: 4, text: "   " }])).toBe(false);
+    expect(hasSungLines([{ time: 1, text: "" }, { time: 4, text: "la" }])).toBe(true);
   });
 });

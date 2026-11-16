@@ -3,7 +3,7 @@ import type { QueueItemWithRelations } from "./queueView.js";
 
 vi.mock("../db.js", () => ({ prisma: {} }));
 
-import { buildQueueView } from "./queueView.js";
+import { SONG_VIEW_SELECT, buildQueueView } from "./queueView.js";
 
 const USER = { id: "00000000-0000-4000-8000-0000000000f1", name: "Dana" };
 
@@ -81,5 +81,12 @@ describe("buildQueueView", () => {
     const view = buildQueueView([item("a", 1, "ready", true, true), item("b", 2, "ready")], "a", []);
     expect(view.current?.song.hasVocals).toBe(true);
     expect(view.upcoming[0]?.song.hasVocals).toBe(false);
+  });
+});
+
+describe("SONG_VIEW_SELECT", () => {
+  it("loads only the song columns the views use, never the word timings", () => {
+    expect(SONG_VIEW_SELECT).not.toHaveProperty("lyricsWordTimings");
+    expect(SONG_VIEW_SELECT).toMatchObject({ lyricsLrc: true, lyricsPlain: true, instrumentalObjectKey: true });
   });
 });
