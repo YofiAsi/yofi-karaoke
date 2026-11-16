@@ -222,7 +222,9 @@ function Get-ExitedChild {
 }
 
 function Show-ChildFailure($Child) {
-    Write-Host "$($Child.name) exited with code $($Child.process.ExitCode). Last log lines:" -ForegroundColor Red
+    $code = $Child.process.ExitCode
+    $how = if ($null -eq $code) { "stopped" } else { "exited with code $code" }
+    Write-Host "$($Child.name) $how. Last log lines:" -ForegroundColor Red
     foreach ($file in @($Child.err, $Child.log)) {
         if (Test-Path $file) { Get-Content $file -Tail 20 | ForEach-Object { Write-Host "  $_" } }
     }
