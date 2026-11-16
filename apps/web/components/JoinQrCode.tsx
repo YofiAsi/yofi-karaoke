@@ -2,16 +2,18 @@
 
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
-import { displayOrigin } from "@/lib/upNext";
+import { displayOrigin, isLoopbackHost } from "@/lib/upNext";
 
 interface JoinTarget {
   url: string;
   qrDataUrl: string;
+  unreachable: boolean;
 }
 
-async function buildJoinTarget(url: string): Promise<JoinTarget> {
+async function buildJoinTarget(location: Location): Promise<JoinTarget> {
+  const url = location.origin;
   const qrDataUrl = await QRCode.toDataURL(url, { width: 512, margin: 1, errorCorrectionLevel: "M" });
-  return { url, qrDataUrl };
+  return { url, qrDataUrl, unreachable: isLoopbackHost(location.hostname) };
 }
 
 export function JoinQrCode() {
@@ -19,7 +21,7 @@ export function JoinQrCode() {
 
   useEffect(() => {
     let cancelled = false;
-    buildJoinTarget(window.location.origin)
+    buildJoinTarget(window.location)
       .then((built) => {
         if (!cancelled) setTarget(built);
       })
@@ -43,6 +45,11 @@ export function JoinQrCode() {
         <span dir="ltr" className="block text-sm text-neutral-400 break-all">
           {displayOrigin(target.url)}
         </span>
+        {target.unreachable && (
+          <span role="note" className="mt-2 block text-sm text-amber-400">
+            Phones cannot reach this address. Open the TV page through the LAN address or the tunnel URL instead.
+          </span>
+        )}
       </figcaption>
     </figure>
   );
