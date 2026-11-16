@@ -46,3 +46,6 @@ jobs:
 
       - name: Test web
         run: pnpm --filter web test
+
+      - name: Test worker
+        run: pnpm --filter worker test
