@@ -43,7 +43,7 @@ services:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -82,18 +82,18 @@ services:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
       api:
         condition: service_healthy
     volumes:
       - models:/app/models
       - worker-tmp:/tmp/karaoke
     healthcheck:
-      test: ["CMD-SHELL", "pidof node >/dev/null 2>&1 || exit 1"]
+      test: ["CMD", "node", "/app/apps/worker/healthcheck.cjs"]
       interval: 30s
-      timeout: 5s
+      timeout: 15s
       retries: 3
-      start_period: 120s
+      start_period: 180s
     restart: unless-stopped
 
   postgres:
@@ -117,6 +117,12 @@ services:
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     volumes:
       - miniodata:/data
     restart: unless-stopped

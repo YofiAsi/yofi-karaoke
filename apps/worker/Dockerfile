@@ -55,6 +55,7 @@ RUN python3.11 -m venv /opt/venv \
 WORKDIR /app
 COPY --from=node-builder /app /app
 COPY scripts/docker/entrypoint.sh /usr/local/bin/karaoke-entrypoint.sh
+COPY scripts/docker/worker-healthcheck.cjs /app/apps/worker/healthcheck.cjs
 
 WORKDIR /app/apps/worker
 ENTRYPOINT ["sh", "/usr/local/bin/karaoke-entrypoint.sh"]
