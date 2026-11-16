@@ -75,7 +75,7 @@ describe("decideRefetch", () => {
 });
 
 describe("refetchLyrics task", () => {
-  const helpers = { logger: { info: vi.fn(), warn: vi.fn() } } as unknown as Parameters<typeof refetchLyrics>[1];
+  const helpers = { logger: { info: vi.fn(), warn: vi.fn() }, job: { id: "7" } } as unknown as Parameters<typeof refetchLyrics>[1];
   const row = { title: "A - B", artist: "A", track: null, trackArtist: null, durationSeconds: 200, ...storedSynced };
 
   beforeEach(() => {
@@ -119,6 +119,7 @@ describe("refetchLyrics task", () => {
     mockAddTimed.mockResolvedValueOnce(whisperResult);
     await refetchLyrics({ songId: "s1" }, helpers);
     expect(mockAddTimed.mock.calls[0][2]).toBe("/stems/vocals/s1.mp3");
+    expect(mockAddTimed.mock.calls[0][4]).toEqual({ tier: 1, order: 7 });
     expect(mockQuery.mock.calls[1][1].slice(0, 4)).toEqual(["s1", whisperResult.syncedLyrics, null, "whisper"]);
     expect(mockNotify).toHaveBeenCalledOnce();
   });

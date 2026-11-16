@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../env.js", () => ({ env: {} }));
 
-import { languageHint, parseTranscribeOutput } from "./transcribe.js";
+import { languageHint, toTranscript } from "./transcribe.js";
 
 describe("languageHint", () => {
   it("hints Hebrew from Hebrew letters in the title", () => {
@@ -12,17 +12,17 @@ describe("languageHint", () => {
   });
 });
 
-describe("parseTranscribeOutput", () => {
-  it("reads words from the last stdout line", () => {
-    const stdout = 'log\n{"language": "he", "device": "cuda", "words": [{"text": " שלום", "start": 1.2, "end": 1.6, "probability": 0.9}, {"bad": 1}]}\n';
-    expect(parseTranscribeOutput(stdout)).toEqual({
+describe("toTranscript", () => {
+  it("keeps only well formed words from the sidecar result", () => {
+    const result = { language: "he", device: "cuda", words: [{ text: " שלום", start: 1.2, end: 1.6, probability: 0.9 }, { bad: 1 }] };
+    expect(toTranscript(result)).toEqual({
       language: "he",
       device: "cuda",
       words: [{ text: " שלום", start: 1.2, end: 1.6, probability: 0.9 }],
     });
   });
 
-  it("rejects output that is not JSON", () => {
-    expect(() => parseTranscribeOutput("Traceback")).toThrow(/did not emit JSON/);
+  it("rejects a result without a words list", () => {
+    expect(() => toTranscript({ language: "he" })).toThrow(/no words list/);
   });
 });

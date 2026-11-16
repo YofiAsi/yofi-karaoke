@@ -3,6 +3,7 @@ import type { Task } from "graphile-worker";
 import { pool, notify } from "../db.js";
 import { fetchLyrics, TRANSIENT_MISS_REASONS, type LyricsLogger, type LyricsResult, type LyricsSource } from "../steps/lyrics.js";
 import { addTimedLyrics, planTimedLyrics, transcriptionEnabled } from "../steps/timedLyrics.js";
+import { refetchPriority, type GpuPriority } from "../gpu/index.js";
 import { withStemFile } from "../storage/stemFile.js";
 import { PgNotifyChannels } from "@karaoke/shared";
 
@@ -83,14 +84,19 @@ async function loadStoredLyrics(songId: string): Promise<StoredLyricsRow | null>
   return rows[0] ?? null;
 }
 
-async function withVocalsFallback(stored: StoredLyricsRow, lyrics: LyricsResult, log: LyricsLogger): Promise<LyricsResult> {
+async function withVocalsFallback(
+  stored: StoredLyricsRow,
+  lyrics: LyricsResult,
+  log: LyricsLogger,
+  priority: GpuPriority,
+): Promise<LyricsResult> {
   if (!transcriptionEnabled() || planTimedLyrics(lyrics) === "skip") return lyrics;
   if (!stored.vocalsObjectKey) {
     log("timed lyrics skipped: song has no stored vocals stem");
     return lyrics;
   }
   try {
-    return await withStemFile(stored.vocalsObjectKey, (file) => addTimedLyrics(stored, lyrics, file, log));
+    return await withStemFile(stored.vocalsObjectKey, (file) => addTimedLyrics(stored, lyrics, file, log, priority));
   } catch (err) {
     log(`timed lyrics skipped: vocals stem unreadable: ${err instanceof Error ? err.message : String(err)}`);
     return lyrics;
@@ -116,7 +122,7 @@ export const refetchLyrics: Task = async (payload, helpers) => {
   if (decideRefetch(stored, looked) === "retry") {
     throw new Error(`lyrics refetch for ${songId} hit a transient failure (${looked.missReason}); retrying later`);
   }
-  const lyrics = await withVocalsFallback(stored, looked, log);
+  const lyrics = await withVocalsFallback(stored, looked, log, refetchPriority(helpers.job));
   if (decideRefetch(stored, lyrics) === "keep") {
     log(`kept stored lyrics; new result (${lyrics.source}) is worse`);
     return;

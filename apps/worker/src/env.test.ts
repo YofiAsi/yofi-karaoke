@@ -26,15 +26,21 @@ describe("worker env", () => {
     expect(env.STORAGE_DRIVER).toBe("minio");
   });
 
-  it("points at the bundled separate.py by default", () => {
+  it("points at the bundled GPU sidecar by default", () => {
     const env = parseEnv({ ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x" });
-    expect(env.SEPARATE_PY_PATH.split(path.sep).join("/")).toMatch(/apps\/worker\/python\/separate\.py$/);
+    expect(env.GPU_SIDECAR_PY_PATH.split(path.sep).join("/")).toMatch(/apps\/worker\/python\/gpu_sidecar\.py$/);
+  });
+
+  it("runs four jobs at once by default and validates WORKER_CONCURRENCY", () => {
+    const base = { ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x" };
+    expect(parseEnv(base).WORKER_CONCURRENCY).toBe(4);
+    expect(parseEnv({ ...base, WORKER_CONCURRENCY: "2" }).WORKER_CONCURRENCY).toBe(2);
+    for (const bad of ["0", "17", "1.5", "many"]) expect(() => parseEnv({ ...base, WORKER_CONCURRENCY: bad })).toThrow();
   });
 
   it("keeps transcription off unless asked for", () => {
     const env = parseEnv({ ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x" });
     expect(env.TRANSCRIBE_BACKEND).toBe("none");
-    expect(env.TRANSCRIBE_PY_PATH.split(path.sep).join("/")).toMatch(/apps\/worker\/python\/transcribe\.py$/);
     expect(parseEnv({ ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x", TRANSCRIBE_BACKEND: "cuda" }).TRANSCRIBE_BACKEND).toBe("cuda");
     expect(() => parseEnv({ ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x", TRANSCRIBE_BACKEND: "rocm" })).toThrow();
   });

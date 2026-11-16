@@ -1,5 +1,6 @@
 // Fills in synced lyrics from the vocals stem: Whisper lines when nothing was found, alignment when only plain text exists.
 import { env } from "../env.js";
+import type { GpuPriority } from "../gpu/index.js";
 import { alignLyrics } from "../lyrics/align.js";
 import { buildLines } from "../lyrics/lineBuilder.js";
 import { toLrc, type TranscriptWord } from "../lyrics/tokens.js";
@@ -57,6 +58,7 @@ export async function addTimedLyrics(
   lyrics: LyricsResult,
   vocalsPath: string | null,
   log: LyricsLogger,
+  priority: GpuPriority,
 ): Promise<LyricsResult> {
   if (!transcriptionEnabled() || planTimedLyrics(lyrics) === "skip") return lyrics;
   if (!vocalsPath) {
@@ -64,8 +66,8 @@ export async function addTimedLyrics(
     return lyrics;
   }
   try {
-    const transcript = await transcribeVocals(vocalsPath, languageHint(song.title, song.track));
-    log(`transcribed ${transcript.words.length} words language=${transcript.language} device=${transcript.device} in ${transcript.wallMs}ms`);
+    const transcript = await transcribeVocals(vocalsPath, languageHint(song.title, song.track), priority);
+    log(`transcribed ${transcript.words.length} words language=${transcript.language} device=${transcript.device} in ${transcript.wallMs}ms after ${transcript.queuedMs}ms in the GPU lane`);
     return applyTranscript(lyrics, transcript.words, log);
   } catch (err) {
     log(`timed lyrics failed, keeping existing lyrics: ${err instanceof Error ? err.message.slice(0, 500) : String(err)}`);

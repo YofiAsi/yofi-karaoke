@@ -3,8 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
-const DEFAULT_SEPARATE_PY = fileURLToPath(new URL("../python/separate.py", import.meta.url));
-const DEFAULT_TRANSCRIBE_PY = fileURLToPath(new URL("../python/transcribe.py", import.meta.url));
+const DEFAULT_GPU_SIDECAR_PY = fileURLToPath(new URL("../python/gpu_sidecar.py", import.meta.url));
 
 const EnvSchema = z
   .object({
@@ -24,10 +23,11 @@ const EnvSchema = z
     AUDIO_SEP_MODEL_DIR: z.string().default("/app/models"),
     SEPARATOR_BACKEND: z.enum(["openvino", "cuda", "cpu"]).default("openvino"),
     PYTHON_BIN: z.string().default("python3"),
-    SEPARATE_PY_PATH: z.string().default(DEFAULT_SEPARATE_PY),
+    GPU_SIDECAR_PY_PATH: z.string().default(DEFAULT_GPU_SIDECAR_PY),
     YTDLP_BIN: z.string().default("yt-dlp"),
     YTDLP_JS_RUNTIMES: z.string().optional(),
     WORKER_TMP_DIR: z.string().default(path.join(os.tmpdir(), "karaoke")),
+    WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(4),
     SEPARATE_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
     DOWNLOAD_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
     STEM_BITRATE: z
@@ -40,7 +40,6 @@ const EnvSchema = z
     LRCLIB_MAX_RETRIES: z.coerce.number().int().nonnegative().default(2),
     LYRICS_OVH_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
     TRANSCRIBE_BACKEND: z.enum(["cuda", "none"]).default("none"),
-    TRANSCRIBE_PY_PATH: z.string().default(DEFAULT_TRANSCRIBE_PY),
     WHISPER_MODEL_DIR: z.string().min(1).optional(),
     TRANSCRIBE_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
   })
