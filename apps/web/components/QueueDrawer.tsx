@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import type { QueueItem, SongProgressEvent } from "@karaoke/shared";
+import type { QueueItem, SongProgressEvent, User } from "@karaoke/shared";
 import { QueueList } from "./QueueList";
 
 interface QueueDrawerProps {
@@ -9,7 +9,8 @@ interface QueueDrawerProps {
   onClose: () => void;
   items: QueueItem[];
   progress: Map<string, SongProgressEvent>;
-  canRetryAsHost: boolean;
+  currentUser: User;
+  isHost: boolean;
   onQueueChanged: () => Promise<void>;
 }
 
@@ -18,7 +19,8 @@ export function QueueDrawer({
   onClose,
   items,
   progress,
-  canRetryAsHost,
+  currentUser,
+  isHost,
   onQueueChanged,
 }: QueueDrawerProps) {
   useEffect(() => {
@@ -59,7 +61,8 @@ export function QueueDrawer({
         <QueueList
           items={items}
           progress={progress}
-          canRetryAsHost={canRetryAsHost}
+          currentUser={currentUser}
+          isHost={isHost}
           onQueueChanged={onQueueChanged}
         />
       </div>

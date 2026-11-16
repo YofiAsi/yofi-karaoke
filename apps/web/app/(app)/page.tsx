@@ -94,7 +94,8 @@ export default function HomePage() {
         onClose={() => setQueueOpen(false)}
         items={upcoming}
         progress={progress}
-        canRetryAsHost={isHost}
+        currentUser={user}
+        isHost={isHost}
         onQueueChanged={refetchQueue}
       />
     </main>

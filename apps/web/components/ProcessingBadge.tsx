@@ -12,8 +12,7 @@ export function ProcessingBadge({ item, liveProgress }: ProcessingBadgeProps) {
   if (item.state === "failed") {
     return <span className="text-xs font-semibold uppercase tracking-wide text-red-400">failed</span>;
   }
-  if (item.state === "processing") {
-    // Prefer live socket data over static queue snapshot
+  if (item.state === "processing" || item.state === "queued") {
     const step = liveProgress?.step ?? item.progress?.step ?? "pending";
     const pct = liveProgress?.progressPct ?? item.progress?.progressPct ?? 0;
     return (
@@ -22,6 +21,5 @@ export function ProcessingBadge({ item, liveProgress }: ProcessingBadgeProps) {
       </span>
     );
   }
-  // queued, played, skipped
   return <span className="text-xs text-neutral-500">{item.state}</span>;
 }
