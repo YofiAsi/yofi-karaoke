@@ -1,7 +1,13 @@
-// Runs at most a fixed number of tasks at once and lets identical in flight keys share one task.
+// Runs at most a fixed number of tasks at once with a bounded wait queue, and lets identical in flight keys share one task.
 export type Task<T> = () => Promise<T>;
 
-export function createConcurrencyLimiter(maxConcurrent: number) {
+export class LimiterBusyError extends Error {
+  constructor() {
+    super("limiter_busy");
+  }
+}
+
+export function createConcurrencyLimiter(maxConcurrent: number, maxWaiting = Infinity) {
   let running = 0;
   const waiting: Array<() => void> = [];
 
@@ -16,6 +22,7 @@ export function createConcurrencyLimiter(maxConcurrent: number) {
       running += 1;
       return;
     }
+    if (waiting.length >= maxWaiting) throw new LimiterBusyError();
     await new Promise<void>((resolve) => waiting.push(resolve));
   }
 

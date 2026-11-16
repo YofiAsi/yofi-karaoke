@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SearchResultItem } from "@karaoke/shared";
-import { createSearchService, type SearchFn } from "./searchService.js";
+import { createSearchService, SearchBusyError, type SearchFn } from "./searchService.js";
 
 function result(id: string): SearchResultItem {
   return { youtubeVideoId: id, title: id, channel: "c", durationSeconds: 1, thumbnailUrl: "https://x/y.jpg" };
@@ -78,6 +78,18 @@ describe("search service", () => {
 
     time.advance(60_000);
     expect(await service.search("u", "four")).toMatchObject({ kind: "ok" });
+  });
+
+  it("reports busy when too many distinct searches are waiting", async () => {
+    const pending = deferred<SearchResultItem[]>();
+    const search = vi.fn<SearchFn>(() => pending.promise);
+    const service = createSearchService({ search, maxConcurrent: 1, maxWaiting: 1 });
+
+    const running = service.search("u", "a");
+    const waiting = service.search("u", "b");
+    await expect(service.search("u", "c")).rejects.toBeInstanceOf(SearchBusyError);
+    pending.resolve([]);
+    await Promise.all([running, waiting]);
   });
 
   it("does not cache failures", async () => {

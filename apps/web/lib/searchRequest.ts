@@ -4,6 +4,7 @@ import type { SearchResultItem } from "@karaoke/shared";
 export type SearchOutcome =
   | { kind: "ok"; results: SearchResultItem[] }
   | { kind: "rate_limited"; retryAfterSeconds: number }
+  | { kind: "busy" }
   | { kind: "unavailable" }
   | { kind: "failed" };
 
@@ -28,7 +29,9 @@ async function errorCodeOf(res: Response): Promise<string | null> {
 async function outcomeOf(res: Response): Promise<SearchOutcome> {
   if (res.ok) return { kind: "ok", results: (await res.json()) as SearchResultItem[] };
   if (res.status === 429) return { kind: "rate_limited", retryAfterSeconds: retryAfterOf(res) };
-  if ((await errorCodeOf(res)) === "video_unavailable") return { kind: "unavailable" };
+  const code = await errorCodeOf(res);
+  if (code === "search_busy") return { kind: "busy" };
+  if (code === "video_unavailable") return { kind: "unavailable" };
   return { kind: "failed" };
 }
 

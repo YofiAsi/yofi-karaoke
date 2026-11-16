@@ -5,6 +5,8 @@ import { createConcurrencyLimiter, createSingleFlight } from "./concurrency.js";
 import { createRateLimiter } from "./rateLimiter.js";
 import { normalizeQuery } from "./results.js";
 
+export { LimiterBusyError as SearchBusyError } from "./concurrency.js";
+
 export type SearchFn = (query: string) => Promise<SearchResultItem[]>;
 
 export interface SearchServiceOptions {
@@ -13,6 +15,7 @@ export interface SearchServiceOptions {
   cacheTtlMs?: number;
   cacheMaxEntries?: number;
   maxConcurrent?: number;
+  maxWaiting?: number;
   perUserLimit?: number;
   rateWindowMs?: number;
 }
@@ -25,6 +28,7 @@ export const SEARCH_DEFAULTS = {
   cacheTtlMs: 10 * 60_000,
   cacheMaxEntries: 500,
   maxConcurrent: 2,
+  maxWaiting: 4,
   perUserLimit: 20,
   rateWindowMs: 60_000,
 };
@@ -36,7 +40,7 @@ export function createSearchService(options: SearchServiceOptions) {
     maxEntries: settings.cacheMaxEntries,
     now: settings.now,
   });
-  const limiter = createConcurrencyLimiter(settings.maxConcurrent);
+  const limiter = createConcurrencyLimiter(settings.maxConcurrent, settings.maxWaiting);
   const singleFlight = createSingleFlight<SearchResultItem[]>();
   const rateLimiter = createRateLimiter({
     limit: settings.perUserLimit,
