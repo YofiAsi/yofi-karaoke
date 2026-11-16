@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LyricsResult } from "../steps/lyrics.js";
+import type { TimedLyrics } from "../steps/timedLyrics.js";
+import type { TranscriptWord } from "../lyrics/tokens.js";
 
 const m = vi.hoisted(() => ({
   query: vi.fn(),
@@ -39,6 +41,12 @@ import { processingSongIds, processSong } from "./processSong.js";
 const SONG = { id: "s1", youtubeVideoId: "yt1", title: "נופיה - פרח", artist: "Nofia", track: null, trackArtist: null, durationSeconds: 164 };
 const MISS: LyricsResult = { syncedLyrics: null, plainLyrics: null, source: "none", missReason: "not_found", matchedQuery: null };
 const WHISPER: LyricsResult = { ...MISS, syncedLyrics: "[00:01.00]x", source: "whisper", missReason: null };
+const SYNCED: LyricsResult = { ...MISS, syncedLyrics: "[00:01.00]paper boats\n[00:05.00]river", source: "lrclib", missReason: null };
+const HEARD: TranscriptWord[] = [
+  { text: " paper", start: 1.1, end: 1.5, probability: 0.9 },
+  { text: " boats", start: 1.6, end: 2.1, probability: 0.9 },
+  { text: " river", start: 5.2, end: 5.8, probability: 0.9 },
+];
 const STEMS = { instrumentalPath: "/w/i.mp3", vocalsPath: "/w/v.mp3", queuedMs: 0, wallMs: 9, loadMs: 0, inferenceMs: 5, encodeMs: 3 };
 
 function deferred<T>() {
@@ -83,7 +91,7 @@ beforeEach(() => {
   });
   m.addTimed.mockImplementation(async () => {
     m.events.push("timed done");
-    return WHISPER;
+    return { lyrics: WHISPER, words: null };
   });
   m.upload.mockImplementation(async (kind: string) => `${kind}/s1.mp3`);
   m.ready.mockImplementation(async () => void m.events.push("ready"));
@@ -93,9 +101,18 @@ beforeEach(() => {
   });
 });
 
-function savedLyrics(): unknown[] {
+function saveCall(): unknown[] {
   const call = m.query.mock.calls.find(([sql]) => String(sql).includes('"lyricsMissReason" = $5'));
-  return call ? call[1].slice(1, 4) : [];
+  return call ? call[1] : [];
+}
+
+function savedLyrics(): unknown[] {
+  return saveCall().slice(1, 4);
+}
+
+function savedWordTimings(): unknown {
+  const value = saveCall()[5];
+  return typeof value === "string" ? JSON.parse(value) : value;
 }
 
 const JAPANESE_PLAIN: LyricsResult = { ...MISS, plainLyrics: "夢をみた", source: "lrclib_plain", missReason: null };
@@ -135,21 +152,53 @@ describe("processSong", () => {
   });
 
   it("uploads stems while timed lyrics run", async () => {
-    const timed = deferred<LyricsResult>();
+    const timed = deferred<TimedLyrics>();
     m.addTimed.mockReturnValueOnce(timed.promise);
     const job = processSong({ songId: "s1" }, helpers());
 
     await vi.waitFor(() => expect(m.upload).toHaveBeenCalledTimes(2));
     expect(m.ready).not.toHaveBeenCalled();
-    timed.resolve(WHISPER);
+    timed.resolve({ lyrics: WHISPER, words: null });
     await job;
     expect(m.ready).toHaveBeenCalledOnce();
   });
 
-  it("skips the transcription progress step when synced lyrics were found", async () => {
-    m.fetchLyrics.mockResolvedValueOnce({ ...WHISPER, source: "lrclib" });
+  it("transcribes songs with LRCLIB synced lyrics too and saves word timings in the same write", async () => {
+    m.fetchLyrics.mockResolvedValueOnce(SYNCED);
+    m.addTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => ({ lyrics, words: HEARD }));
+    await processSong({ songId: "s1" }, helpers());
+    expect(m.addTimed.mock.calls[0][1]).toEqual(SYNCED);
+    expect(progress()).toEqual(["downloading 5", "separating 35", "fetching_lyrics 80", "fetching_lyrics 90", "done 100"]);
+    expect(savedLyrics()).toEqual([SYNCED.syncedLyrics, null, "lrclib"]);
+    expect(savedWordTimings()).toEqual([
+      { start: 1, end: 2.1, words: [{ text: "paper", start: 1.1, end: 1.5 }, { text: "boats", start: 1.6, end: 2.1 }] },
+      { start: 5, end: 5.8, words: [{ text: "river", start: 5.2, end: 5.8 }] },
+    ]);
+  });
+
+  it("skips the transcription progress step without a vocals stem", async () => {
+    m.separate.mockResolvedValueOnce({ ...STEMS, vocalsPath: null });
     await processSong({ songId: "s1" }, helpers());
     expect(progress()).toEqual(["downloading 5", "separating 35", "fetching_lyrics 80", "done 100"]);
+  });
+
+  it("saves no word timings without a transcript", async () => {
+    m.fetchLyrics.mockResolvedValueOnce(SYNCED);
+    m.addTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => ({ lyrics, words: null }));
+    await processSong({ songId: "s1" }, helpers());
+    expect(savedLyrics()).toEqual([SYNCED.syncedLyrics, null, "lrclib"]);
+    expect(savedWordTimings()).toBeNull();
+  });
+
+  it("keeps the lyrics and marks the song ready when word timing fails", async () => {
+    m.fetchLyrics.mockResolvedValueOnce(SYNCED);
+    const broken = HEARD.map((word) => ({ ...word, start: Number.NaN }));
+    m.addTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => ({ lyrics, words: broken }));
+    await processSong({ songId: "s1" }, helpers());
+    expect(savedLyrics()).toEqual([SYNCED.syncedLyrics, null, "lrclib"]);
+    expect(savedWordTimings()).toBeNull();
+    expect(m.ready).toHaveBeenCalledOnce();
+    expect(m.failed).not.toHaveBeenCalled();
   });
 
   it("fails the job at the join when the lookup itself throws, like before", async () => {
@@ -182,9 +231,10 @@ describe("processSong", () => {
     m.fetchLyrics.mockResolvedValueOnce(JAPANESE_PLAIN);
     m.addTimed.mockImplementationOnce(async () => {
       m.events.push("timed done");
-      return JAPANESE_ALIGNED;
+      return { lyrics: JAPANESE_ALIGNED, words: [{ text: "夢をみた", start: 3.3, end: 4, probability: 0.9 }] };
     });
     await processSong({ songId: "s1" }, helpers());
+    expect(savedWordTimings()).toBeNull();
     expect(m.addTimed.mock.calls[0][1]).toEqual(JAPANESE_PLAIN);
     expect(m.romanize).toHaveBeenCalledWith(["夢をみた", "夢をみた"]);
     expect(savedLyrics()).toEqual(["[00:03.20]yume o mita", "yume o mita", "aligned"]);
@@ -199,7 +249,7 @@ describe("processSong", () => {
 
   it("saves the Japanese lyrics and still marks the song ready when romanization fails", async () => {
     m.fetchLyrics.mockResolvedValueOnce({ ...JAPANESE_ALIGNED, source: "lrclib" });
-    m.addTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => lyrics);
+    m.addTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => ({ lyrics, words: null }));
     m.romanize.mockRejectedValueOnce(new Error("romanize.py exited with code 1"));
     await processSong({ songId: "s1" }, helpers());
     expect(savedLyrics()).toEqual(["[00:03.20]夢をみた", "夢をみた", "lrclib"]);

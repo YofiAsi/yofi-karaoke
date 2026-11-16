@@ -2,12 +2,12 @@
 import type { JobHelpers, Task } from "graphile-worker";
 import { pool, notify } from "../db.js";
 import { fetchLyrics, TRANSIENT_MISS_REASONS, type LyricsLogger, type LyricsResult, type LyricsSource } from "../steps/lyrics.js";
-import { addTimedLyrics, planTimedLyrics, transcriptionEnabled } from "../steps/timedLyrics.js";
+import { addTimedLyrics, transcriptionEnabled, untimed, wordTimingsFor, type TimedLyrics } from "../steps/timedLyrics.js";
 import { romanizeLyrics } from "../steps/romaji.js";
 import { refetchPriority, type GpuPriority } from "../gpu/index.js";
 import { withSongLock } from "../songLock.js";
 import { withStemFile } from "../storage/stemFile.js";
-import { PgNotifyChannels } from "@karaoke/shared";
+import { PgNotifyChannels, type LyricsWordTimings } from "@karaoke/shared";
 
 interface RefetchLyricsPayload {
   songId: string;
@@ -29,42 +29,68 @@ type StoredLyrics = Pick<StoredLyricsRow, "lyricsLrc" | "lyricsPlain"> & { lyric
 
 export type RefetchDecision = "save" | "keep" | "retry";
 
-export async function saveLyrics(songId: string, lyrics: LyricsResult): Promise<void> {
+export function wordTimingsParam(lyrics: LyricsResult, wordTimings: LyricsWordTimings | null): string | null {
+  return lyrics.syncedLyrics && wordTimings ? JSON.stringify(wordTimings) : null;
+}
+
+export async function saveLyrics(songId: string, lyrics: LyricsResult, wordTimings: LyricsWordTimings | null): Promise<void> {
   await pool.query(
     `UPDATE "Song"
         SET "lyricsLrc" = $2,
             "lyricsPlain" = $3,
             "lyricsSource" = $4,
-            "lyricsMissReason" = $5
+            "lyricsMissReason" = $5,
+            "lyricsWordTimings" = $6::jsonb
       WHERE id = $1`,
-    [songId, lyrics.syncedLyrics, lyrics.plainLyrics, lyrics.source, lyrics.missReason],
+    [songId, lyrics.syncedLyrics, lyrics.plainLyrics, lyrics.source, lyrics.missReason, wordTimingsParam(lyrics, wordTimings)],
   );
 }
 
-async function saveLyricsIfUnchanged(songId: string, lyrics: LyricsResult, stored: StoredLyrics): Promise<boolean> {
+async function saveLyricsIfUnchanged(
+  songId: string,
+  lyrics: LyricsResult,
+  wordTimings: LyricsWordTimings | null,
+  stored: StoredLyrics,
+): Promise<boolean> {
   const { rowCount } = await pool.query(
     `UPDATE "Song"
         SET "lyricsLrc" = $2,
             "lyricsPlain" = $3,
             "lyricsSource" = $4,
-            "lyricsMissReason" = $5
+            "lyricsMissReason" = $5,
+            "lyricsWordTimings" = $8::jsonb
       WHERE id = $1
         AND "lyricsLrc" IS NOT DISTINCT FROM $6
         AND "lyricsPlain" IS NOT DISTINCT FROM $7`,
-    [songId, lyrics.syncedLyrics, lyrics.plainLyrics, lyrics.source, lyrics.missReason, stored.lyricsLrc, stored.lyricsPlain],
+    [
+      songId,
+      lyrics.syncedLyrics,
+      lyrics.plainLyrics,
+      lyrics.source,
+      lyrics.missReason,
+      stored.lyricsLrc,
+      stored.lyricsPlain,
+      wordTimingsParam(lyrics, wordTimings),
+    ],
   );
   return (rowCount ?? 0) > 0;
 }
 
-async function saveTextIfUnchanged(songId: string, lyrics: LyricsResult, stored: StoredLyrics): Promise<boolean> {
+async function saveTextIfUnchanged(
+  songId: string,
+  lyrics: LyricsResult,
+  wordTimings: LyricsWordTimings | null,
+  stored: StoredLyrics,
+): Promise<boolean> {
   const { rowCount } = await pool.query(
     `UPDATE "Song"
         SET "lyricsLrc" = $2,
-            "lyricsPlain" = $3
+            "lyricsPlain" = $3,
+            "lyricsWordTimings" = $6::jsonb
       WHERE id = $1
         AND "lyricsLrc" IS NOT DISTINCT FROM $4
         AND "lyricsPlain" IS NOT DISTINCT FROM $5`,
-    [songId, lyrics.syncedLyrics, lyrics.plainLyrics, stored.lyricsLrc, stored.lyricsPlain],
+    [songId, lyrics.syncedLyrics, lyrics.plainLyrics, stored.lyricsLrc, stored.lyricsPlain, wordTimingsParam(lyrics, wordTimings)],
   );
   return (rowCount ?? 0) > 0;
 }
@@ -99,22 +125,22 @@ async function loadStoredLyrics(songId: string): Promise<StoredLyricsRow | null>
   return rows[0] ?? null;
 }
 
-async function withVocalsFallback(
+async function withTranscript(
   stored: StoredLyricsRow,
   lyrics: LyricsResult,
   log: LyricsLogger,
   priority: GpuPriority,
-): Promise<LyricsResult> {
-  if (!transcriptionEnabled() || planTimedLyrics(lyrics) === "skip") return lyrics;
+): Promise<TimedLyrics> {
+  if (!transcriptionEnabled()) return untimed(lyrics);
   if (!stored.vocalsObjectKey) {
     log("timed lyrics skipped: song has no stored vocals stem");
-    return lyrics;
+    return untimed(lyrics);
   }
   try {
     return await withStemFile(stored.vocalsObjectKey, (file) => addTimedLyrics(stored, lyrics, file, log, priority));
   } catch (err) {
     log(`timed lyrics skipped: vocals stem unreadable: ${err instanceof Error ? err.message : String(err)}`);
-    return lyrics;
+    return untimed(lyrics);
   }
 }
 
@@ -127,11 +153,19 @@ function sameText(lyrics: LyricsResult, stored: StoredLyrics): boolean {
   return lyrics.syncedLyrics === stored.lyricsLrc && lyrics.plainLyrics === stored.lyricsPlain;
 }
 
-async function romanizeStored(songId: string, stored: StoredLyricsRow, log: LyricsLogger): Promise<void> {
-  const romanized = await romanizeLyrics(storedAsResult(stored), log);
-  if (sameText(romanized, stored)) return;
-  if (await saveTextIfUnchanged(songId, romanized, stored)) {
-    log("stored lyrics rewritten as romaji");
+async function refreshStored(
+  songId: string,
+  stored: StoredLyricsRow,
+  words: TimedLyrics["words"],
+  log: LyricsLogger,
+): Promise<void> {
+  const current = storedAsResult(stored);
+  const romanized = await romanizeLyrics(current, log);
+  const textChanged = !sameText(romanized, stored);
+  const wordTimings = textChanged ? null : wordTimingsFor(current, { lyrics: current, words }, stored.durationSeconds, log);
+  if (!textChanged && !wordTimings) return;
+  if (await saveTextIfUnchanged(songId, romanized, wordTimings, stored)) {
+    log(textChanged ? "stored lyrics rewritten as romaji" : "stored lyrics given word timings");
     await notify(PgNotifyChannels.queueUpdated, { reason: "lyrics_refetched", songId });
   }
 }
@@ -146,17 +180,18 @@ async function refetchLocked(songId: string, helpers: JobHelpers): Promise<void>
   }
   const looked = await freshLyrics(stored, log);
   if (decideRefetch(stored, looked) === "retry") {
-    await romanizeStored(songId, stored, log);
+    await refreshStored(songId, stored, null, log);
     throw new Error(`lyrics refetch for ${songId} hit a transient failure (${looked.missReason}); retrying later`);
   }
-  const lyrics = await withVocalsFallback(stored, looked, log, refetchPriority(helpers.job));
-  if (decideRefetch(stored, lyrics) === "keep") {
-    log(`kept stored lyrics; new result (${lyrics.source}) is worse`);
-    await romanizeStored(songId, stored, log);
+  const timed = await withTranscript(stored, looked, log, refetchPriority(helpers.job));
+  if (decideRefetch(stored, timed.lyrics) === "keep") {
+    log(`kept stored lyrics; new result (${timed.lyrics.source}) is worse`);
+    await refreshStored(songId, stored, timed.words, log);
     return;
   }
-  const romanized = await romanizeLyrics(lyrics, log);
-  if (!(await saveLyricsIfUnchanged(songId, romanized, stored))) {
+  const romanized = await romanizeLyrics(timed.lyrics, log);
+  const wordTimings = wordTimingsFor(romanized, timed, stored.durationSeconds, log);
+  if (!(await saveLyricsIfUnchanged(songId, romanized, wordTimings, stored))) {
     log("lyrics changed while this job ran; result dropped");
     return;
   }

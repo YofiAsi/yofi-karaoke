@@ -1,13 +1,20 @@
-// Fills in synced lyrics from the vocals stem: Whisper lines when nothing was found, alignment when only plain text exists.
+// Transcribes the vocals stem for every song: Whisper lines when nothing was found, alignment for plain text, word timings for synced lines.
+import type { LyricsWordTimings } from "@karaoke/shared";
 import { env } from "../env.js";
 import type { GpuPriority } from "../gpu/index.js";
 import { alignLyrics } from "../lyrics/align.js";
 import { buildLines } from "../lyrics/lineBuilder.js";
+import { buildWordTimings } from "../lyrics/wordTimings.js";
 import { toLrc, type TranscriptWord } from "../lyrics/tokens.js";
 import type { LyricsLogger, LyricsResult, LyricsSource } from "./lyrics.js";
 import { languageHint, transcribeVocals } from "./transcribe.js";
 
-export type TimedLyricsPlan = "transcribe" | "align" | "skip";
+export type TimedLyricsPlan = "transcribe" | "align" | "words";
+
+export interface TimedLyrics {
+  lyrics: LyricsResult;
+  words: TranscriptWord[] | null;
+}
 
 export interface SongNames {
   title: string;
@@ -22,7 +29,7 @@ function withoutPlainLyrics(lyrics: LyricsResult): LyricsResult {
 }
 
 export function planTimedLyrics(lyrics: Pick<LyricsResult, "syncedLyrics" | "plainLyrics">): TimedLyricsPlan {
-  if (lyrics.syncedLyrics?.trim()) return "skip";
+  if (lyrics.syncedLyrics?.trim()) return "words";
   return lyrics.plainLyrics?.trim() ? "align" : "transcribe";
 }
 
@@ -62,24 +69,54 @@ export function transcriptionEnabled(): boolean {
   return env.TRANSCRIBE_BACKEND !== "none";
 }
 
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message.slice(0, 500) : String(err);
+}
+
+export function untimed(lyrics: LyricsResult): TimedLyrics {
+  return { lyrics, words: null };
+}
+
 export async function addTimedLyrics(
   song: SongNames,
   lyrics: LyricsResult,
   vocalsPath: string | null,
   log: LyricsLogger,
   priority: GpuPriority,
-): Promise<LyricsResult> {
-  if (!transcriptionEnabled() || planTimedLyrics(lyrics) === "skip") return lyrics;
+): Promise<TimedLyrics> {
+  if (!transcriptionEnabled()) return untimed(lyrics);
   if (!vocalsPath) {
     log("timed lyrics skipped: no vocals stem");
-    return lyrics;
+    return untimed(lyrics);
   }
   try {
     const transcript = await transcribeVocals(vocalsPath, languageHint(song.title, song.track), priority);
     log(`transcribed ${transcript.words.length} words language=${transcript.language} device=${transcript.device} in ${transcript.wallMs}ms after ${transcript.queuedMs}ms in the GPU lane`);
-    return applyTranscript(lyrics, transcript.words, log);
+    return { lyrics: applyTranscript(lyrics, transcript.words, log), words: transcript.words };
   } catch (err) {
-    log(`timed lyrics failed, keeping existing lyrics: ${err instanceof Error ? err.message.slice(0, 500) : String(err)}`);
-    return lyrics;
+    log(`timed lyrics failed, keeping existing lyrics: ${describeError(err)}`);
+    return untimed(lyrics);
+  }
+}
+
+export function wordTimingsFor(
+  saved: LyricsResult,
+  timed: TimedLyrics,
+  durationSeconds: number,
+  log: LyricsLogger,
+): LyricsWordTimings | null {
+  if (!saved.syncedLyrics || !timed.words) return null;
+  if (saved.syncedLyrics !== timed.lyrics.syncedLyrics) {
+    log("word timings left to the estimate: line text changed after transcription");
+    return null;
+  }
+  try {
+    const timings = buildWordTimings(saved.syncedLyrics, timed.words, durationSeconds);
+    const timedLines = timings?.filter((line) => line.words.length > 0).length ?? 0;
+    log(`word timings for ${timedLines} of ${timings?.length ?? 0} lines`);
+    return timings;
+  } catch (err) {
+    log(`word timings failed, leaving them to the estimate: ${describeError(err)}`);
+    return null;
   }
 }
