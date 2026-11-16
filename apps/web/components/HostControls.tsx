@@ -10,6 +10,7 @@ interface HostControlsProps {
   playbackState: PlaybackStateView | null;
   currentSongDuration?: number;
   currentSongId?: string;
+  currentSongTitle?: string;
   lyricsOffsetMs?: number;
   onLyricsOffsetChange?: (offsetMs: number) => void;
 }
@@ -27,6 +28,7 @@ export function HostControls({
   playbackState,
   currentSongDuration,
   currentSongId,
+  currentSongTitle,
   lyricsOffsetMs = 0,
   onLyricsOffsetChange,
 }: HostControlsProps) {
@@ -178,7 +180,7 @@ export function HostControls({
         </div>
       )}
 
-      {currentSongId && <PasteLyricsPanel songId={currentSongId} />}
+      {currentSongId && <PasteLyricsPanel songId={currentSongId} songTitle={currentSongTitle} />}
     </div>
   );
 }

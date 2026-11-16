@@ -3,11 +3,29 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { MAX_MANUAL_LYRICS_CHARS, checkManualLyrics } from "@/lib/manualLyrics";
+import { shironetSearchUrl } from "@/lib/shironet";
 
 type SendState = "idle" | "sending" | "sent" | "failed";
 
 interface PasteLyricsPanelProps {
   songId: string;
+  songTitle?: string;
+}
+
+function ShironetSearchLink({ songTitle }: { songTitle?: string }) {
+  const url = songTitle ? shironetSearchUrl(songTitle) : null;
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      dir="rtl"
+      className="self-start rounded-full border border-neutral-600 px-3 py-1.5 hover:bg-neutral-700"
+    >
+      חיפוש בשירונט ↗
+    </a>
+  );
 }
 
 const SEND_LABELS: Record<SendState, string> = {
@@ -17,7 +35,7 @@ const SEND_LABELS: Record<SendState, string> = {
   failed: "Retry",
 };
 
-export function PasteLyricsPanel({ songId }: PasteLyricsPanelProps) {
+export function PasteLyricsPanel({ songId, songTitle }: PasteLyricsPanelProps) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [sendState, setSendState] = useState<SendState>("idle");
@@ -60,6 +78,7 @@ export function PasteLyricsPanel({ songId }: PasteLyricsPanelProps) {
 
   return (
     <div className="flex flex-col gap-2 text-sm text-neutral-300">
+      <ShironetSearchLink songTitle={songTitle} />
       <textarea
         dir="auto"
         value={text}
