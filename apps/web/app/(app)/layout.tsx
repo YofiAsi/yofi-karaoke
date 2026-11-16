@@ -13,6 +13,7 @@ import { api } from "@/lib/api";
 import { loadStoredUser, validateStoredUser } from "@/lib/user";
 import { isCurrentHost, isPlayerDevice } from "@/lib/roles";
 import { withTick } from "@/lib/playbackTick";
+import { usePositionClock } from "@/lib/usePositionClock";
 import { useSocket } from "@/lib/socket";
 import { parseLrc, type LrcLine } from "@/lib/lrc";
 import { PlayerToggle } from "@/components/PlayerToggle";
@@ -42,6 +43,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const [audioPosition, setAudioPosition] = useState<number | null>(null);
   const [lyricsVersion, setLyricsVersion] = useState(0);
   const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
+  const clock = usePositionClock();
 
   useEffect(() => {
     let cancelled = false;
@@ -65,12 +67,19 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     } catch { /* ignore */ }
   }, []);
 
+  const { onState: clockOnState, onTick: clockOnTick } = clock;
+
+  const applyPlaybackState = useCallback((data: PlaybackStateView) => {
+    setPlaybackState(data);
+    setLastTick(null);
+    clockOnState(data);
+  }, [clockOnState]);
+
   const fetchPlaybackState = useCallback(async () => {
     try {
-      setPlaybackState(await api.get<PlaybackStateView>("/api/playback"));
-      setLastTick(null);
+      applyPlaybackState(await api.get<PlaybackStateView>("/api/playback"));
     } catch { /* ignore */ }
-  }, []);
+  }, [applyPlaybackState]);
 
   useEffect(() => {
     if (!user) return;
@@ -82,8 +91,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       setLyricsVersion((v) => v + 1);
     }
     function onPlaybackState(data: PlaybackStateView) {
-      setPlaybackState(data);
-      setLastTick(null);
+      applyPlaybackState(data);
     }
     function onSongProgress(data: SongProgressEvent) {
       setProgress((prev) => {
@@ -99,6 +107,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     }
     function onPlaybackTick(data: PlaybackTickEvent) {
       setLastTick(data);
+      clockOnTick(data);
     }
 
     socket.on("queue:updated", onQueueUpdated);
@@ -118,7 +127,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       socket.off("player:changed", onHostOrPlayerChanged);
       socket.io.off("reconnect", onReconnect);
     };
-  }, [user, socket, fetchQueue, fetchPlaybackState]);
+  }, [user, socket, fetchQueue, fetchPlaybackState, applyPlaybackState, clockOnTick]);
 
   const isHost = isCurrentHost(user, playbackState);
   const isPlayer = isPlayerDevice(user, playbackState);
@@ -157,7 +166,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
 
   const current = queue?.current ?? null;
   const audioSource = current?.song.hasInstrumental
-    ? { queueItemId: current.id, songId: current.song.id }
+    ? { queueItemId: current.id, songId: current.song.id, hasVocals: current.song.hasVocals }
     : null;
 
   if (!user) return null;
@@ -177,6 +186,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         audioPosition,
         setAudioPosition,
         refetchQueue: fetchQueue,
+        positionClock: isPlayer ? null : clock.clock,
       }}
     >
       <PlayerToggle

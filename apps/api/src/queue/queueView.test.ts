@@ -7,7 +7,13 @@ import { buildQueueView } from "./queueView.js";
 
 const USER = { id: "00000000-0000-4000-8000-0000000000f1", name: "Dana" };
 
-function item(id: string, position: number, state: string, instrumental = true): QueueItemWithRelations {
+function item(
+  id: string,
+  position: number,
+  state: string,
+  instrumental = true,
+  vocals = false,
+): QueueItemWithRelations {
   return {
     id,
     songId: `song-${id}`,
@@ -25,6 +31,7 @@ function item(id: string, position: number, state: string, instrumental = true):
       durationSeconds: 200,
       thumbnailUrl: "",
       instrumentalObjectKey: instrumental ? "key" : null,
+      vocalsObjectKey: vocals ? "vocals-key" : null,
       lyricsLrc: null,
       lyricsPlain: null,
     },
@@ -68,5 +75,11 @@ describe("buildQueueView", () => {
     const view = buildQueueView([item("a", 1, "processing", false)], null, jobs);
     expect(view.upcoming[0]?.progress).toEqual({ step: "separating", progressPct: 40, errorMessage: null });
     expect(view.upcoming[0]?.song.hasInstrumental).toBe(false);
+  });
+
+  it("reports whether the song has a vocals stem", () => {
+    const view = buildQueueView([item("a", 1, "ready", true, true), item("b", 2, "ready")], "a", []);
+    expect(view.current?.song.hasVocals).toBe(true);
+    expect(view.upcoming[0]?.song.hasVocals).toBe(false);
   });
 });

@@ -3,11 +3,13 @@ import {
   SeekBodySchema,
   PositionBodySchema,
   PlaybackTransitionBodySchema,
+  VocalsGainBodySchema,
   SocketEvents,
   type PlaybackTickEvent,
   type PlaybackTransitionBody,
   type PositionBody,
   type PlaybackTransitionResult,
+  type VocalsGainBody,
 } from "@karaoke/shared";
 import { prisma } from "../db.js";
 import { requireUser } from "../auth/userCookie.js";
@@ -21,7 +23,9 @@ import {
   notifyQueueUpdated,
 } from "../playback/notify.js";
 import { advance, play, recordPosition, rewind } from "../playback/transitions.js";
+import { loadCurrentForVocals, storeVocalsGain, vocalsGainDenial } from "../playback/vocals.js";
 import { asAlreadyQueued, httpError } from "../queue/httpError.js";
+import { loadActor } from "../queue/permissions.js";
 
 async function requirePlayer(req: FastifyRequest): Promise<void> {
   const user = await requireUser(req);
@@ -111,9 +115,22 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
       await requirePlayer(req);
       const { queueItemId, positionSeconds } = req.body as PositionBody;
       if (await recordPosition(queueItemId, positionSeconds)) {
-        const tick: PlaybackTickEvent = { queueItemId, positionSeconds };
+        const tick: PlaybackTickEvent = { queueItemId, positionSeconds, serverTimeMs: Date.now() };
         getIO().emit(SocketEvents.playbackTick, tick);
       }
+      return reply.code(204).send();
+    },
+  });
+
+  app.post("/api/playback/vocals", {
+    schema: { body: VocalsGainBodySchema },
+    handler: async (req, reply) => {
+      const { gain, queueItemId } = req.body as VocalsGainBody;
+      const [actor, current] = await Promise.all([loadActor(req), loadCurrentForVocals()]);
+      const denial = vocalsGainDenial(actor, current, queueItemId);
+      if (denial) throw denial;
+      if (!(await storeVocalsGain(queueItemId, gain))) throw httpError(409, "not_current");
+      publishPlaybackState(req);
       return reply.code(204).send();
     },
   });

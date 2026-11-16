@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canRemoveItem, isCurrentHost, isPlayerDevice } from "./roles";
+import { canControlVocals, canRemoveItem, isCurrentHost, isPlayerDevice } from "./roles";
 
 const HOST = { id: "host" };
 const GUEST = { id: "guest" };
@@ -24,5 +24,14 @@ describe("roles", () => {
     expect(canRemoveItem(GUEST, item, false)).toBe(true);
     expect(canRemoveItem({ id: "someone" }, item, false)).toBe(false);
     expect(canRemoveItem({ id: "someone" }, item, true)).toBe(true);
+  });
+
+  it("shows the vocals slider to the host and to the requester of the current song only", () => {
+    const current = { requestedByUserId: "guest" };
+    expect(canControlVocals(GUEST, false, current)).toBe(true);
+    expect(canControlVocals(HOST, true, current)).toBe(true);
+    expect(canControlVocals({ id: "someone" }, false, current)).toBe(false);
+    expect(canControlVocals(HOST, true, null)).toBe(false);
+    expect(canControlVocals(null, true, current)).toBe(false);
   });
 });
