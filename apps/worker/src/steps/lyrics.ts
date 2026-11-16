@@ -333,10 +333,8 @@ async function toOutcome(response: Response): Promise<HttpOutcome<unknown>> {
 }
 
 async function waitForLrclibSlot(): Promise<void> {
-  const now = Date.now();
-  const waitMs = Math.max(0, nextLrclibSlotAt - now);
-  nextLrclibSlotAt = Math.max(now, nextLrclibSlotAt) + env.LRCLIB_MIN_INTERVAL_MS;
-  if (waitMs > 0) await sleep(waitMs);
+  while (Date.now() < nextLrclibSlotAt) await sleep(nextLrclibSlotAt - Date.now());
+  nextLrclibSlotAt = Date.now() + env.LRCLIB_MIN_INTERVAL_MS;
 }
 
 export function retryDelayMs(response: Response, attempt: number): number {

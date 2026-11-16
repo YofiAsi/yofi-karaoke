@@ -69,10 +69,10 @@ Those ship in Phase 2 and Phase 3.
 
 ## Recording the run
 
-Tail the worker logs so you can paste separation times into `bench.md`:
+Tail the worker logs so you can paste separation times and per stage timings into `bench.md`:
 
 ```bash
-docker compose logs --since 10m worker | grep "separate.py wall"
+docker compose logs --since 10m worker | grep -E "separate wall|stages"
 ```
 
 If separation is over the 60-second gate, switch `AUDIO_SEP_MODEL` in `.env` to `Kim_Vocal_2.onnx`, restart the worker, and re-run step 2.

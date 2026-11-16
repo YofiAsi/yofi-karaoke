@@ -10,6 +10,7 @@ vi.mock("../env.js", () => ({
   },
 }));
 
+import { env } from "../env.js";
 import { artistMatches, fetchLyrics, pickBestEntry, retryDelayMs } from "./lyrics.js";
 
 const SYNCED = "[00:01.00]line";
@@ -236,5 +237,31 @@ describe("fetchLyrics", () => {
     stubFetch((url) => (url.hostname === "api.lyrics.ovh" ? json({ lyrics: PLAIN }) : json({}, 404)));
     const result = await fetchLyrics(song, silent);
     expect(result).toMatchObject({ source: "ovh", plainLyrics: PLAIN, missReason: null });
+  });
+});
+
+describe("LRCLIB pacing", () => {
+  it("keeps the minimum interval across lookups that run at the same time", async () => {
+    const interval = 20;
+    const sentAt: number[] = [];
+    stubFetch((url) => {
+      if (url.hostname === "lrclib.test") sentAt.push(Date.now());
+      return json({ error: "not found" }, 404);
+    });
+    const mutableEnv = env as { LRCLIB_MIN_INTERVAL_MS: number };
+    mutableEnv.LRCLIB_MIN_INTERVAL_MS = interval;
+    try {
+      const songs = ["Adele - Hello", "Queen - Bohemian Rhapsody", "Drake - Hotline Bling"].map((title) => ({
+        title,
+        artist: title.split(" - ")[0],
+        durationSeconds: 200,
+      }));
+      await Promise.all(songs.map((song) => fetchLyrics(song, silent)));
+    } finally {
+      mutableEnv.LRCLIB_MIN_INTERVAL_MS = 0;
+    }
+    const gaps = sentAt.slice(1).map((t, i) => t - sentAt[i]);
+    expect(sentAt.length).toBeGreaterThan(6);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(interval);
   });
 });

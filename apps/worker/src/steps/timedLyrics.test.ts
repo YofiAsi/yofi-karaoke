@@ -35,6 +35,7 @@ const heard = [
   ...sung("call me on my cell phone", 22),
 ];
 const log = vi.fn();
+const lane = { tier: 0, order: 1 };
 
 describe("planTimedLyrics", () => {
   it("never touches synced lyrics, aligns plain text and transcribes otherwise", () => {
@@ -80,29 +81,29 @@ describe("addTimedLyrics", () => {
 
   it("does nothing when transcription is off", async () => {
     mockEnv.TRANSCRIBE_BACKEND = "none";
-    expect(await addTimedLyrics({ title: "t" }, none, "/v.mp3", log)).toBe(none);
+    expect(await addTimedLyrics({ title: "t" }, none, "/v.mp3", log, lane)).toBe(none);
     expect(mockTranscribe).not.toHaveBeenCalled();
   });
 
   it("does not transcribe songs that already have synced lyrics", async () => {
-    expect(await addTimedLyrics({ title: "t" }, synced, "/v.mp3", log)).toBe(synced);
+    expect(await addTimedLyrics({ title: "t" }, synced, "/v.mp3", log, lane)).toBe(synced);
     expect(mockTranscribe).not.toHaveBeenCalled();
   });
 
   it("passes a Hebrew hint for Hebrew titles", async () => {
-    mockTranscribe.mockResolvedValueOnce({ language: "he", device: "cuda", words: heard, wallMs: 1 });
-    await addTimedLyrics({ title: "נופיה - פרח" }, none, "/v.mp3", log);
-    expect(mockTranscribe).toHaveBeenCalledWith("/v.mp3", "he");
+    mockTranscribe.mockResolvedValueOnce({ language: "he", device: "cuda", words: heard, wallMs: 1, queuedMs: 0 });
+    await addTimedLyrics({ title: "נופיה - פרח" }, none, "/v.mp3", log, lane);
+    expect(mockTranscribe).toHaveBeenCalledWith("/v.mp3", "he", lane);
   });
 
   it("keeps existing lyrics when transcription fails", async () => {
-    mockTranscribe.mockRejectedValueOnce(new Error("transcribe.py timed out after 180000ms"));
-    expect(await addTimedLyrics({ title: "t" }, plain, "/v.mp3", log)).toBe(plain);
+    mockTranscribe.mockRejectedValueOnce(new Error("transcribe timed out after 180000ms in gpu sidecar"));
+    expect(await addTimedLyrics({ title: "t" }, plain, "/v.mp3", log, lane)).toBe(plain);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("timed out"));
   });
 
   it("skips songs without a vocals stem", async () => {
-    expect(await addTimedLyrics({ title: "t" }, none, null, log)).toBe(none);
+    expect(await addTimedLyrics({ title: "t" }, none, null, log, lane)).toBe(none);
     expect(mockTranscribe).not.toHaveBeenCalled();
   });
 });
