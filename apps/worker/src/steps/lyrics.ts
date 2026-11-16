@@ -75,6 +75,13 @@ export async function fetchLyrics(
     plainFallback ??= found;
   }
 
+  const trackOnly = await lookupTrackOnly(candidates, params, recordFailure);
+  if (trackOnly && hasText(trackOnly.entry.syncedLyrics)) {
+    log(`lyrics hit (synced) via ${trackOnly.query}`);
+    return hit(trackOnly, "lrclib");
+  }
+  plainFallback ??= trackOnly;
+
   if (plainFallback) {
     log(`lyrics hit (plain only) via ${plainFallback.query}`);
     return hit(plainFallback, "lrclib_plain");
@@ -118,6 +125,46 @@ async function lookupCandidate(
     plain ??= match;
   }
   return plain;
+}
+
+async function lookupTrackOnly(
+  candidates: LyricsCandidate[],
+  params: LyricsQueryInput & { durationSeconds: number },
+  recordFailure: (outcome: HttpOutcome<unknown>, query: string) => void,
+): Promise<Match | null> {
+  const knownArtists = [params.artist, params.title, params.trackArtist ?? "", ...candidates.map((c) => c.artist)];
+  let plain: Match | null = null;
+  for (const track of distinctSplitTracks(candidates)) {
+    const label = `search track="${track}" with artist check`;
+    const outcome = await lrclibRequest<LrclibEntry[]>("/api/search", { track_name: track });
+    recordFailure(outcome, label);
+    if (outcome.kind !== "ok") continue;
+    const sameArtist = outcome.body.filter((e) => artistMatches(e.artistName, knownArtists));
+    const entry = pickBestEntry(sameArtist, params.durationSeconds);
+    if (!entry) continue;
+    const match = { entry, query: label };
+    if (hasText(entry.syncedLyrics)) return match;
+    plain ??= match;
+  }
+  return plain;
+}
+
+function distinctSplitTracks(candidates: LyricsCandidate[]): string[] {
+  const tracks = candidates.map((c) => c.track).filter((t) => !/\s[-–—]\s/.test(t));
+  return [...new Set(tracks)];
+}
+
+export function artistMatches(artistName: string | null | undefined, knownArtists: string[]): boolean {
+  const artist = normalizeName(artistName ?? "");
+  if (artist.length < 2) return false;
+  return knownArtists.some((raw) => {
+    const known = normalizeName(raw);
+    return known.length >= 2 && (known.includes(artist) || artist.includes(known));
+  });
+}
+
+function normalizeName(text: string): string {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
 function lrclibQueries(candidate: LyricsCandidate, durationSeconds: number) {

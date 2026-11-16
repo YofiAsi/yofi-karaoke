@@ -10,7 +10,7 @@ vi.mock("../env.js", () => ({
   },
 }));
 
-import { fetchLyrics, pickBestEntry } from "./lyrics.js";
+import { artistMatches, fetchLyrics, pickBestEntry } from "./lyrics.js";
 
 const SYNCED = "[00:01.00]line";
 const PLAIN = "line";
@@ -56,6 +56,18 @@ describe("pickBestEntry", () => {
 
   it("skips instrumental entries", () => {
     expect(pickBestEntry([{ duration: 200, instrumental: true, plainLyrics: PLAIN }], 200)).toBeNull();
+  });
+});
+
+describe("artistMatches", () => {
+  it.each([
+    ["Omer Adam", ["Omer Adam - עומר אדם"], true],
+    ["עומר אדם", ["עומר אדם - שני משוגעים"], true],
+    ["Mark Ronson feat. Bruno Mars", ["Mark Ronson"], true],
+    ["Guy & Yahel", ["Hanan Ben Ari - חנן בן ארי", "חנן בן ארי"], false],
+    [null, ["anything"], false],
+  ])("%s against %j is %s", (artist, known, expected) => {
+    expect(artistMatches(artist, known)).toBe(expected);
   });
 });
 
@@ -123,6 +135,38 @@ describe("fetchLyrics", () => {
     );
     const result = await fetchLyrics(song, silent);
     expect(result.missReason).toBe("network_error");
+  });
+
+  it("searches by track only and accepts only matching artists", async () => {
+    const hebrewSong = {
+      title: "סטטיק ובן אל תבורי - טודו בום (Prod. by Jordi)",
+      artist: "Static & Ben El",
+      durationSeconds: 196,
+    };
+    stubFetch((url) => {
+      const trackOnly = url.pathname === "/api/search" && !url.searchParams.has("artist_name") && !url.searchParams.has("q");
+      if (!trackOnly) return url.pathname === "/api/get" ? json({}, 404) : json([]);
+      return json([
+        { artistName: "Someone Else", duration: 195, syncedLyrics: SYNCED },
+        { artistName: "Static & Ben El", duration: 189, syncedLyrics: SYNCED, plainLyrics: PLAIN },
+      ]);
+    });
+    const result = await fetchLyrics(hebrewSong, silent);
+    expect(result).toMatchObject({ source: "lrclib", syncedLyrics: SYNCED });
+    expect(result.matchedQuery).toContain('track="טודו בום"');
+  });
+
+  it("rejects a same named track by another artist", async () => {
+    stubFetch((url) =>
+      url.pathname === "/api/search" && url.searchParams.has("track_name") && !url.searchParams.has("artist_name")
+        ? json([{ artistName: "Guy & Yahel", duration: 210, syncedLyrics: SYNCED }])
+        : json({}, 404),
+    );
+    const result = await fetchLyrics(
+      { title: "חנן בן ארי - תאמין (קליפ רשמי)", artist: "Hanan Ben Ari - חנן בן ארי", durationSeconds: 215 },
+      silent,
+    );
+    expect(result.source).toBe("none");
   });
 
   it("returns ovh plain lyrics when LRCLIB misses", async () => {
