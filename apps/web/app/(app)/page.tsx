@@ -20,7 +20,7 @@ export default function HomePage() {
     lrcLines,
     plainLyrics,
     wordTimings,
-    lyricsSongId,
+    lyricsLoading,
     lyricsOffsetMs,
     lyricsSource,
     setLyricsOffsetMs,
@@ -101,8 +101,7 @@ export default function HomePage() {
         {current && (
           <display.Component
             key={`${display.id}:${current.id}`}
-            songId={current.song.id}
-            lyricsSongId={lyricsSongId}
+            loading={lyricsLoading ?? false}
             lines={lrcLines}
             wordTimings={wordTimings}
             positionSeconds={lyricsPosition}

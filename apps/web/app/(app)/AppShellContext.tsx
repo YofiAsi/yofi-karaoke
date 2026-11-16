@@ -21,7 +21,7 @@ export interface AppShellState {
   lrcLines: LrcLine[];
   plainLyrics: string | null;
   wordTimings?: LyricsWordTimings | null;
-  lyricsSongId?: string | null;
+  lyricsLoading?: boolean;
   lyricsOffsetMs: number;
   lyricsSource?: string | null;
   setLyricsOffsetMs: (offsetMs: number) => void;

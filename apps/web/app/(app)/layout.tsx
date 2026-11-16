@@ -9,7 +9,6 @@ import type {
   SongProgressEvent,
   PlaybackTickEvent,
   User,
-  LyricsWordTimings,
 } from "@karaoke/shared";
 import { api } from "@/lib/api";
 import { nameUrlFor } from "@/lib/returnPath";
@@ -20,22 +19,9 @@ import { clockForItem, lyricsPositionFor, type PlayerTick } from "@/lib/lyricsPo
 import { readerForItem, type PlayerPositionReader } from "@/lib/livePosition";
 import { usePositionClock } from "@/lib/usePositionClock";
 import { useSocket } from "@/lib/socket";
-import { parseLrc, type LrcLine } from "@/lib/lrc";
+import { NOT_LOADED, lyricsFromResponse, noLyricsFor, shownLyrics, type LyricsResponse, type SongLyrics } from "@/lib/songLyrics";
 import { PlayerToggle } from "@/components/PlayerToggle";
 import { AppShellContext } from "./AppShellContext";
-
-interface LyricsResponse {
-  lrc: string | null;
-  plain: string | null;
-  wordTimings?: LyricsWordTimings | null;
-  offsetMs?: number;
-  source?: string | null;
-}
-
-function toLyricsState({ lrc, plain }: LyricsResponse) {
-  const lines = parseLrc(lrc);
-  return { lines, plain: plain ?? (lines.length === 0 ? lrc : null) };
-}
 
 export default function AppShellLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -46,15 +32,11 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const [playbackState, setPlaybackState] = useState<PlaybackStateView | null>(null);
   const [lastTick, setLastTick] = useState<PlaybackTickEvent | null>(null);
   const [progress, setProgress] = useState<Map<string, SongProgressEvent>>(() => new Map());
-  const [lrcLines, setLrcLines] = useState<LrcLine[]>([]);
-  const [plainLyrics, setPlainLyrics] = useState<string | null>(null);
-  const [wordTimings, setWordTimings] = useState<LyricsWordTimings | null>(null);
-  const [lyricsSongId, setLyricsSongId] = useState<string | null>(null);
+  const [songLyrics, setSongLyrics] = useState<SongLyrics>(NOT_LOADED);
   const [playerReader, setPlayerReader] = useState<PlayerPositionReader | null>(null);
   const [playerTick, setPlayerTick] = useState<PlayerTick | null>(null);
   const [lyricsVersion, setLyricsVersion] = useState(0);
   const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
-  const [lyricsSource, setLyricsSource] = useState<string | null>(null);
   const clock = usePositionClock();
   const [failedVocalsSongId, setFailedVocalsSongId] = useState<string | null>(null);
 
@@ -170,34 +152,27 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   useEffect(() => {
     const songId = currentSong?.id ?? null;
     if (!songId || !currentSong?.hasLyrics) {
-      setLrcLines([]);
-      setPlainLyrics(null);
-      setWordTimings(null);
-      setLyricsSongId(songId);
+      setSongLyrics(noLyricsFor(songId));
       setLyricsOffsetMs(0);
-      setLyricsSource(null);
       return;
     }
+    let cancelled = false;
     api
       .get<LyricsResponse>(`/api/songs/${songId}/lyrics`)
       .then((res) => {
-        const { lines, plain } = toLyricsState(res);
-        setLrcLines(lines);
-        setPlainLyrics(plain);
-        setWordTimings(res.wordTimings ?? null);
-        setLyricsSongId(songId);
+        if (cancelled) return;
+        setSongLyrics(lyricsFromResponse(songId, res));
         setLyricsOffsetMs(res.offsetMs ?? 0);
-        setLyricsSource(res.source ?? null);
       })
       .catch(() => {
-        setLrcLines([]);
-        setPlainLyrics(null);
-        setWordTimings(null);
-        setLyricsSongId(songId);
-        setLyricsSource(null);
+        if (!cancelled) setSongLyrics(noLyricsFor(songId));
       });
+    return () => {
+      cancelled = true;
+    };
   }, [currentSong?.id, currentSong?.hasLyrics, lyricsVersion]);
 
+  const lyrics = shownLyrics(songLyrics, currentSong?.id ?? null);
   const current = queue?.current ?? null;
   const currentItemId = current?.id ?? null;
   const lyricsPosition = lyricsPositionFor(currentItemId, isPlayer ? playerTick : null, displayedPlayback);
@@ -215,12 +190,12 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         queue,
         playbackState: displayedPlayback,
         progress,
-        lrcLines,
-        plainLyrics,
-        wordTimings,
-        lyricsSongId,
+        lrcLines: lyrics.lines,
+        plainLyrics: lyrics.plain,
+        wordTimings: lyrics.wordTimings,
+        lyricsLoading: lyrics.loading,
         lyricsOffsetMs,
-        lyricsSource,
+        lyricsSource: lyrics.source,
         setLyricsOffsetMs,
         lyricsPosition,
         refetchQueue: fetchQueue,

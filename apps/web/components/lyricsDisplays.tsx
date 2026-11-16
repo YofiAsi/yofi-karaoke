@@ -17,8 +17,7 @@ import { AutoLyricsLabel, LyricsView } from "./LyricsView";
 import { KaraokeView } from "./KaraokeView";
 
 export interface LyricsDisplayProps {
-  songId: string;
-  lyricsSongId?: string | null;
+  loading: boolean;
   lines: LrcLine[];
   wordTimings?: LyricsWordTimings | null;
   plainText?: string;
@@ -40,7 +39,12 @@ export interface LyricsDisplay {
 const TV_SCROLL_TEXT = "[&_p]:!text-[clamp(2rem,4.2vw,4.75rem)] [&_p]:!leading-tight";
 const TV_LABEL_TEXT = "[&>p]:!text-[clamp(1rem,1.4vw,1.6rem)]";
 
+function LoadingLyrics() {
+  return <div className="flex-1 min-h-0" />;
+}
+
 function ScrollingLyrics(props: LyricsDisplayProps) {
+  if (props.loading) return <LoadingLyrics />;
   return (
     <div className={`flex-1 min-h-0 flex flex-col ${props.surface === "tv" ? TV_SCROLL_TEXT : ""}`}>
       <LyricsView
@@ -58,8 +62,7 @@ function ScrollingLyrics(props: LyricsDisplayProps) {
 }
 
 function KaraokeLyrics(props: LyricsDisplayProps) {
-  if (props.lyricsSongId !== props.songId) return <div className="flex-1 min-h-0" />;
-  if (props.lines.length === 0) return <ScrollingLyrics {...props} />;
+  if (props.loading || props.lines.length === 0) return <ScrollingLyrics {...props} />;
   return (
     <div className={`flex-1 min-h-0 flex flex-col ${props.surface === "tv" ? TV_LABEL_TEXT : ""}`}>
       {isAutomaticLyrics(props.source) && <AutoLyricsLabel />}

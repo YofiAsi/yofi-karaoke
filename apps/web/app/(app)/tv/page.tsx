@@ -67,7 +67,7 @@ export default function TvPage() {
     lrcLines,
     plainLyrics,
     wordTimings,
-    lyricsSongId,
+    lyricsLoading,
     lyricsOffsetMs,
     lyricsSource,
     lyricsPosition,
@@ -86,8 +86,7 @@ export default function TvPage() {
             <NowSinging item={current} />
             <display.Component
               key={`${display.id}:${current.id}`}
-              songId={current.song.id}
-              lyricsSongId={lyricsSongId}
+              loading={lyricsLoading ?? false}
               lines={lrcLines}
               wordTimings={wordTimings}
               positionSeconds={lyricsPosition}

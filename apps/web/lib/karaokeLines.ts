@@ -1,5 +1,5 @@
 // Builds the sung lines of the karaoke display with word times: stored timings when they match the LRC text, else a length based estimate.
-import type { LyricsWordTimings, TimedLine } from "@karaoke/shared";
+import { splitLyricWords, type LyricsWordTimings, type TimedLine } from "@karaoke/shared";
 import type { LrcLine } from "./lrc";
 
 export const ESTIMATE_GAP_SHARE = 0.9;
@@ -20,9 +20,7 @@ export interface KaraokeLine {
   timed: boolean;
 }
 
-export function splitWords(text: string): string[] {
-  return text.trim().split(/\s+/).filter((word) => word.length > 0);
-}
+export const splitWords = splitLyricWords;
 
 function charCount(text: string): number {
   return [...text.replace(/\s+/g, "")].length;
