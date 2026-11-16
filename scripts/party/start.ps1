@@ -256,12 +256,29 @@ function Start-QuickTunnel {
     while ((Get-Date) -lt $deadline) {
         $entry = $script:Children | Where-Object { $_.name -eq "tunnel" }
         $match = Select-String -Path $entry.err -Pattern "https://[a-z0-9-]+\.trycloudflare\.com" -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($match) { return $match.Matches[0].Value }
+        if ($match) { return (Wait-PublicDns $match.Matches[0].Value) }
         if ($child.HasExited) { break }
         Start-Sleep -Milliseconds 500
     }
     Write-Host "The tunnel did not report a public URL; see $($entry.err)" -ForegroundColor Yellow
     return $null
+}
+
+function Test-PublicDns([string]$HostName) {
+    try {
+        return [bool](Resolve-DnsName -Name $HostName -Server "1.1.1.1" -DnsOnly -QuickTimeout -ErrorAction Stop)
+    } catch { return $false }
+}
+
+function Wait-PublicDns([string]$Url) {
+    $hostName = ([Uri]$Url).Host
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-PublicDns $hostName) { return $Url }
+        Start-Sleep -Seconds 2
+    }
+    Write-Host "The public name is not resolvable yet; give it a minute before sharing it." -ForegroundColor Yellow
+    return $Url
 }
 
 function Show-Urls([string]$PublicUrl) {

@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File scripts\party\start.ps1
 powershell -ExecutionPolicy Bypass -File scripts\party\start.ps1 -Tunnel
 ```
 
-The first start asks for the host PIN once and stores it with a generated `SESSION_SECRET`. Each start checks prerequisites, starts a private Postgres cluster on `127.0.0.1:54329` (trust auth, localhost only, separate from any Postgres service on the PC), applies migrations, rebuilds when the checkout changed, then starts api (`127.0.0.1:4100`), worker and web (`0.0.0.0:3000`) and prints the addresses. `-Tunnel` also starts `cloudflared tunnel --url http://localhost:3000` and prints the public `trycloudflare.com` URL; it changes on every start. Ports can be changed with `-WebPort`, `-ApiPort` and `-PgPort`.
+The first start asks for the host PIN once and stores it with a generated `SESSION_SECRET`. The host joins with the name `Host` (set `HOST_USER_NAME` before starting to change it) and that PIN. Each start checks prerequisites, starts a private Postgres cluster on `127.0.0.1:54329` (trust auth, localhost only, separate from any Postgres service on the PC), applies migrations, rebuilds when the checkout changed, then starts api (`127.0.0.1:4100`), worker and web (`0.0.0.0:3000`) and prints the addresses. `-Tunnel` also starts `cloudflared tunnel --url http://localhost:3000` and prints the public `trycloudflare.com` URL once public DNS knows it; the URL changes on every start. A phone that opened the link before the name existed may cache the failure for a few minutes; switching it to mobile data or waiting fixes that. Ports can be changed with `-WebPort`, `-ApiPort` and `-PgPort`.
 
 Press Ctrl+C to stop everything, Postgres included. After a crash or a closed window run:
 
