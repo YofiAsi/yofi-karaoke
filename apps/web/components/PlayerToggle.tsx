@@ -58,6 +58,11 @@ function isAutoplayRejection(err: unknown): boolean {
   return err instanceof DOMException && err.name === "NotAllowedError";
 }
 
+function gainForLoadedItem(playbackState: PlaybackStateView | null, loadedItemId: string | null): number {
+  if (!playbackState || playbackState.currentQueueItemId !== loadedItemId) return 0;
+  return playbackState.vocalsGain;
+}
+
 function browserDocument(): Document | null {
   return typeof document === "undefined" ? null : document;
 }
@@ -252,7 +257,7 @@ function PlayerAudio({
   const { blocked: vocalsBlocked, unlock: unlockVocals } = useVocals(audioRef, vocalsRef, {
     songId: audioSongId,
     hasVocals: source?.hasVocals ?? false,
-    gain: playbackState?.vocalsGain ?? 0,
+    gain: gainForLoadedItem(playbackState, loadedItemId),
   });
 
   const startAudio = useCallback(async () => {
