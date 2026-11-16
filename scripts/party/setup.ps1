@@ -63,6 +63,12 @@ function Show-PostgresChoices {
     Write-Host "  scripts\party\setup.ps1 -DownloadPostgres   (official EDB zip, about 325 MB, into $($Paths.PgSql))"
 }
 
+function Remove-PostgresExtras {
+    foreach ($extra in @("pgAdmin 4", "StackBuilder", "doc", "include")) {
+        Remove-Item (Join-Path $Paths.PgSql $extra) -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Install-PostgresServer {
     if ($PostgresBin) { Use-ProvidedPostgres $PostgresBin; return }
     $found = Find-PostgresBin $Paths
@@ -76,6 +82,7 @@ function Install-PostgresServer {
     Expand-Archive -Path $zip -DestinationPath $staging
     Move-Item (Join-Path $staging "pgsql") $Paths.PgSql
     Remove-Item $staging, $zip -Recurse -Force
+    Remove-PostgresExtras
     if (-not (Find-PostgresBin $Paths)) { Stop-WithError "PostgreSQL binaries were extracted but initdb was not found in $($Paths.PgSql)" }
 }
 
