@@ -19,7 +19,8 @@ from pathlib import Path
 from whisper_models import GENERAL_MODEL, HEBREW_MODEL
 
 HEBREW = "he"
-VAD_PARAMETERS = {"min_silence_duration_ms": 700, "speech_pad_ms": 200}
+RANDOM_SEED = 7
+VAD_PARAMETERS = {"threshold": 0.2, "min_silence_duration_ms": 2000, "speech_pad_ms": 400}
 
 
 def log(message: str) -> None:
@@ -79,7 +80,11 @@ def decode(path: str):
 
 
 def detect_language(model, audio) -> str:
-    language, probability, _ = model.detect_language(audio, vad_filter=True, vad_parameters=VAD_PARAMETERS)
+    from faster_whisper.vad import VadOptions
+
+    language, probability, _ = model.detect_language(
+        audio, vad_filter=True, vad_parameters=VadOptions(**VAD_PARAMETERS), language_detection_segments=3
+    )
     log(f"detected language={language} probability={probability:.2f}")
     return language
 
@@ -96,6 +101,9 @@ def pick_model(model_dir: Path, hint: str, audio, device: str):
 
 
 def transcribe_words(model, audio, language: str) -> list:
+    import ctranslate2
+
+    ctranslate2.set_random_seed(RANDOM_SEED)
     segments, _ = model.transcribe(
         audio,
         language=language,
