@@ -8,6 +8,7 @@ import { downloadYouTubeAudio } from "../steps/download.js";
 import { prewarmSeparation, separateVocals, type SeparateResult } from "../steps/separate.js";
 import { fetchLyrics, type LyricsLogger, type LyricsResult } from "../steps/lyrics.js";
 import { addTimedLyrics, planTimedLyrics, transcriptionEnabled } from "../steps/timedLyrics.js";
+import { romanizeLyrics } from "../steps/romaji.js";
 import { songPriority } from "../gpu/index.js";
 import { withSongLock } from "../songLock.js";
 import { uploadStem } from "../storage/index.js";
@@ -158,10 +159,11 @@ async function runPipeline(songId: string, workDir: string, helpers: JobHelpers)
   await reportProgress(songId, "fetching_lyrics", 80);
   const found = await timed(stages, "lyricsWaitMs", () => lookup);
   if (willAddTimedLyrics(found)) await reportProgress(songId, "fetching_lyrics", 90);
-  const [lyrics, { instrumentalKey, vocalsKey }] = await bothOrFirstError(
+  const [timedLyrics, { instrumentalKey, vocalsKey }] = await bothOrFirstError(
     timed(stages, "timedLyricsMs", () => addTimedLyrics(song, found, stems.vocalsPath, log, priority)),
     timed(stages, "uploadMs", () => uploadStems(songId, stems)),
   );
+  const lyrics = await timed(stages, "romajiMs", () => romanizeLyrics(timedLyrics, log));
 
   await saveLyrics(songId, lyrics);
   await pool.query(
