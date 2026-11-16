@@ -5,10 +5,15 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import type { PlaybackStateView } from "@karaoke/shared";
 import { api } from "@/lib/api";
 
+export interface AudioSource {
+  queueItemId: string;
+  songId: string;
+}
+
 interface PlayerToggleProps {
   isHost: boolean;
   isPlayer: boolean;
-  audioSongId: string | null;
+  source: AudioSource | null;
   playbackState: PlaybackStateView | null;
   onTick?: (positionSeconds: number) => void;
 }
@@ -102,7 +107,7 @@ function usePositionReports(audioRef: RefObject<HTMLAudioElement | null>): void 
 }
 
 function PlayerAudio({
-  audioSongId,
+  source,
   playbackState,
   onTick,
 }: Omit<PlayerToggleProps, "isHost" | "isPlayer">) {
@@ -113,7 +118,8 @@ function PlayerAudio({
   const hiddenWhilePlaying = useVisibilityWatch(audioRef, acquireWake);
   usePositionReports(audioRef);
 
-  const currentQueueItemId = playbackState?.currentQueueItemId ?? null;
+  const audioSongId = source?.songId ?? null;
+  const loadedItemId = source?.queueItemId ?? null;
   const isPlaying = playbackState?.isPlaying ?? false;
   const positionSeconds = playbackState?.positionSeconds ?? 0;
 
@@ -132,9 +138,9 @@ function PlayerAudio({
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
-    loadedItemIdRef.current = audioSongId ? currentQueueItemId : null;
+    loadedItemIdRef.current = loadedItemId;
     loadSource(el, audioSongId);
-  }, [audioSongId, currentQueueItemId]);
+  }, [audioSongId, loadedItemId]);
 
   useEffect(() => {
     const el = audioRef.current;

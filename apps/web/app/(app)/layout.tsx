@@ -151,7 +151,9 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   }, [currentSong?.id, currentSong?.hasLyrics, lyricsVersion]);
 
   const current = queue?.current ?? null;
-  const currentAudioKey = current?.song.hasInstrumental ? current.song.id : null;
+  const audioSource = current?.song.hasInstrumental
+    ? { queueItemId: current.id, songId: current.song.id }
+    : null;
 
   if (!user) return null;
 
@@ -175,7 +177,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       <PlayerToggle
         isHost={isHost}
         isPlayer={isPlayer}
-        audioSongId={currentAudioKey}
+        source={audioSource}
         playbackState={playbackState}
         onTick={setAudioPosition}
       />
