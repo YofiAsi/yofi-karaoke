@@ -24,6 +24,7 @@ const FEAT_TAIL = /(?:^|\s)[(\[]?(?:feat|ft|featuring)\.?\s.*$/i;
 const TITLE_SEPARATOR = /\s+[-–—]\s+/;
 const QUOTES = /["“”„«»]/g;
 const HEBREW_LETTER = /[א-ת]/;
+const LATIN_LETTER = /[a-z]/i;
 const EDGE_SINGLE_QUOTES = /^['‘’]+|['‘’]+$/g;
 const EDGE_DASHES = /^[\s\-–—]+|[\s\-–—]+$/g;
 const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}‍️]/gu;
@@ -40,6 +41,7 @@ export function buildLyricsCandidates(input: LyricsQueryInput): LyricsCandidate[
   const splits = parts.map(splitCandidate).filter(isCandidate);
   const candidates = [
     metadataCandidate(input),
+    ...splits.flatMap(withoutForeignTail),
     ...splits,
     titleCandidate(parts[0] ?? "", input.artist),
     ...splits.map(swapCandidate),
@@ -69,6 +71,26 @@ function splitCandidate(part: string): LyricsCandidate | null {
   if (segments.length < 2) return null;
   const [artist, ...rest] = segments;
   return { track: rest.join(" - "), artist, kind: "split" };
+}
+
+function withoutForeignTail(candidate: LyricsCandidate): LyricsCandidate[] {
+  const parts = splitForeignTail(candidate.track);
+  if (!parts) return [];
+  const trimmed: LyricsCandidate[] = [{ track: parts.main, artist: candidate.artist, kind: "split" }];
+  if (parts.tail.includes(" ")) trimmed.push({ track: parts.main, artist: parts.tail, kind: "split" });
+  return trimmed;
+}
+
+export function splitForeignTail(text: string): { main: string; tail: string } | null {
+  const words = text.split(" ");
+  const [mainScript, tailScript] = HEBREW_LETTER.test(words[0] ?? "")
+    ? [HEBREW_LETTER, LATIN_LETTER]
+    : [LATIN_LETTER, HEBREW_LETTER];
+  let cut = words.length;
+  while (cut > 0 && tailScript.test(words[cut - 1]) && !mainScript.test(words[cut - 1])) cut -= 1;
+  const main = stripTrailingNoise(words.slice(0, cut).join(" "));
+  if (cut === words.length || main.length === 0) return null;
+  return { main, tail: words.slice(cut).join(" ") };
 }
 
 function titleCandidate(part: string, channel: string): LyricsCandidate {

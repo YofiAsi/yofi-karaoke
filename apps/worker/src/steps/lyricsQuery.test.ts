@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildLyricsCandidates, cleanChannel, cleanTitle, type LyricsCandidate } from "./lyricsQuery.js";
+import {
+  buildLyricsCandidates,
+  cleanChannel,
+  cleanTitle,
+  splitForeignTail,
+  type LyricsCandidate,
+} from "./lyricsQuery.js";
 
 function pairs(candidates: LyricsCandidate[]) {
   return candidates.map(({ artist, track }) => ({ artist, track }));
@@ -133,6 +139,30 @@ describe("cleanChannel", () => {
     ["נועה קירל", "נועה קירל"],
   ])("cleans %s", (raw, expected) => {
     expect(cleanChannel(raw)).toBe(expected);
+  });
+});
+
+describe("foreign script tails", () => {
+  it("tries the track without a trailing transliterated artist name first", () => {
+    const candidates = buildLyricsCandidates({
+      title: "איתי לוי - שתשרף האהבה (קליפ רשמי) Itay Levi",
+      artist: "איתי לוי - הערוץ הרשמי",
+    });
+    expect(candidates.slice(0, 3)).toEqual([
+      { track: "שתשרף האהבה", artist: "איתי לוי", kind: "split" },
+      { track: "שתשרף האהבה", artist: "Itay Levi", kind: "split" },
+      { track: "שתשרף האהבה Itay Levi", artist: "איתי לוי", kind: "split" },
+    ]);
+  });
+
+  it.each([
+    ["שתשרף האהבה Itay Levi", { main: "שתשרף האהבה", tail: "Itay Levi" }],
+    ["Unicorn יוניקורן", { main: "Unicorn", tail: "יוניקורן" }],
+    ["אהבה 2000", null],
+    ["Tudo Bom", null],
+    ["שני משוגעים", null],
+  ])("splits %s", (text, expected) => {
+    expect(splitForeignTail(text)).toEqual(expected);
   });
 });
 

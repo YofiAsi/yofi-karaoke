@@ -96,8 +96,28 @@ export function artistMatches(artistName: unknown, knownArtists: string[]): bool
   if (artist.length < 2) return false;
   return knownArtists.some((raw) => {
     const known = normalizeName(raw);
-    return known.length >= 2 && (known.includes(artist) || artist.includes(known));
+    return known.length >= 2 && (known.includes(artist) || artist.includes(known) || nearlyEqual(known, artist));
   });
+}
+
+const MIN_FUZZY_NAME_LENGTH = 6;
+
+function nearlyEqual(a: string, b: string): boolean {
+  if (Math.min(a.length, b.length) < MIN_FUZZY_NAME_LENGTH) return false;
+  return editDistance(a, b) <= (Math.max(a.length, b.length) >= 12 ? 2 : 1);
+}
+
+function editDistance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      const substitution = previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1);
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, substitution);
+    }
+    previous = current;
+  }
+  return previous[b.length];
 }
 
 async function lookupLyrics(params: LyricsLookupParams, run: LookupRun): Promise<LyricsResult> {
@@ -107,16 +127,20 @@ async function lookupLyrics(params: LyricsLookupParams, run: LookupRun): Promise
     return miss("no_candidates");
   }
 
+  const direct = candidates.filter((c) => TRACK_ONLY_KINDS.has(c.kind));
+  const loose = candidates.filter((c) => !TRACK_ONLY_KINDS.has(c.kind));
+  const stages = [
+    () => lookupEach(direct, params.durationSeconds, run),
+    () => lookupTrackOnly(candidates, params, run),
+    () => lookupEach(loose, params.durationSeconds, run),
+  ];
+
   let plainFallback: Match | null = null;
-  for (const candidate of candidates) {
-    const found = await lookupCandidate(candidate, params.durationSeconds, run);
+  for (const stage of stages) {
+    const found = await stage();
     if (found && hasText(found.entry.syncedLyrics)) return logHit(run, found, "lrclib");
     plainFallback ??= found;
   }
-
-  const trackOnly = await lookupTrackOnly(candidates, params, run);
-  if (trackOnly && hasText(trackOnly.entry.syncedLyrics)) return logHit(run, trackOnly, "lrclib");
-  plainFallback ??= trackOnly;
   if (plainFallback) return logHit(run, plainFallback, "lrclib_plain");
 
   const ovh = await lookupOvh(candidates[0], run);
@@ -141,6 +165,20 @@ async function lookupCandidate(
     const match = { entry, query: query.label };
     if (hasText(entry.syncedLyrics)) return match;
     plain ??= match;
+  }
+  return plain;
+}
+
+async function lookupEach(
+  candidates: LyricsCandidate[],
+  durationSeconds: number,
+  run: LookupRun,
+): Promise<Match | null> {
+  let plain: Match | null = null;
+  for (const candidate of candidates) {
+    const found = await lookupCandidate(candidate, durationSeconds, run);
+    if (found && hasText(found.entry.syncedLyrics)) return found;
+    plain ??= found;
   }
   return plain;
 }

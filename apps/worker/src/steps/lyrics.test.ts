@@ -76,6 +76,9 @@ describe("artistMatches", () => {
     ["עומר אדם", ["עומר אדם - שני משוגעים"], true],
     ["Mark Ronson feat. Bruno Mars", ["Mark Ronson"], true],
     ["Guy & Yahel", ["Hanan Ben Ari - חנן בן ארי", "חנן בן ארי"], false],
+    ["Itay Levy", ["איתי לוי", "Itay Levi"], true],
+    ["Eyal Golan", ["Eden Golan"], false],
+    ["Adam", ["Adal"], false],
     [null, ["anything"], false],
   ])("%s against %j is %s", (artist, known, expected) => {
     expect(artistMatches(artist, known)).toBe(expected);
