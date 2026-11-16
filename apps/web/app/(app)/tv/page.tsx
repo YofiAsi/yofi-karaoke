@@ -63,8 +63,7 @@ function UpNextList({ items }: { items: QueueItem[] }) {
 }
 
 export default function TvPage() {
-  const { queue, playbackState, lrcLines, plainLyrics, lyricsOffsetMs, lyricsSource, audioPosition, positionClock } =
-    useAppShell();
+  const { queue, lrcLines, plainLyrics, lyricsOffsetMs, lyricsSource, lyricsPosition, positionClock } = useAppShell();
   const current = queue?.current ?? null;
   const upcoming = queue?.upcoming ?? [];
 
@@ -76,8 +75,9 @@ export default function TvPage() {
             <NowSinging item={current} />
             <div className={`flex-1 min-h-0 flex flex-col ${TV_LYRICS_SIZE}`}>
               <LyricsView
+                key={current.id}
                 lines={lrcLines}
-                positionSeconds={audioPosition ?? playbackState?.positionSeconds ?? 0}
+                positionSeconds={lyricsPosition}
                 plainText={plainLyrics ?? undefined}
                 offsetMs={lyricsOffsetMs}
                 source={lyricsSource}

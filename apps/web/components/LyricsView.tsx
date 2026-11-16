@@ -111,10 +111,6 @@ export function LyricsView({
   useManualScroll(pauseAutoScroll);
 
   useEffect(() => {
-    setAutoScroll(true);
-  }, [lines]);
-
-  useEffect(() => {
     if (autoScroll) activeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [activeIdx, autoScroll]);
 

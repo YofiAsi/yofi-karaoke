@@ -22,7 +22,7 @@ export default function HomePage() {
     lyricsOffsetMs,
     lyricsSource,
     setLyricsOffsetMs,
-    audioPosition,
+    lyricsPosition,
     refetchQueue,
     positionClock,
     failedVocalsSongId,
@@ -79,6 +79,7 @@ export default function HomePage() {
             playbackState={playbackState}
             currentSongDuration={current?.song.durationSeconds}
             currentSongId={current?.song.id}
+            currentSongTitle={current?.song.title}
             lyricsOffsetMs={lyricsOffsetMs}
             onLyricsOffsetChange={setLyricsOffsetMs}
           />
@@ -94,8 +95,9 @@ export default function HomePage() {
         </div>
         {current && (
           <LyricsView
+            key={current.id}
             lines={lrcLines}
-            positionSeconds={audioPosition ?? playbackState?.positionSeconds ?? 0}
+            positionSeconds={lyricsPosition}
             plainText={plainLyrics ?? undefined}
             offsetMs={lyricsOffsetMs}
             source={lyricsSource}

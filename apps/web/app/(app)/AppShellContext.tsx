@@ -21,8 +21,7 @@ export interface AppShellState {
   lyricsOffsetMs: number;
   lyricsSource?: string | null;
   setLyricsOffsetMs: (offsetMs: number) => void;
-  audioPosition: number | null;
-  setAudioPosition: (pos: number) => void;
+  lyricsPosition: number;
   refetchQueue: () => Promise<void>;
   positionClock?: PositionClock | null;
   failedVocalsSongId?: string | null;

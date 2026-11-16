@@ -19,7 +19,7 @@ interface PlayerToggleProps {
   isPlayer: boolean;
   source: AudioSource | null;
   playbackState: PlaybackStateView | null;
-  onTick?: (positionSeconds: number) => void;
+  onTick?: (positionSeconds: number, queueItemId: string) => void;
   onVocalsFailed?: (songId: string) => void;
 }
 
@@ -122,16 +122,20 @@ function usePositionReports(
   }, [isAudible, engine, loadedItemId, recentReportsRef]);
 }
 
-function usePositionTicks(engine: StemPlayer | null, ready: boolean, onTick?: (seconds: number) => void) {
+function usePositionTicks(
+  engine: StemPlayer | null,
+  readyItemId: string | null,
+  onTick?: (seconds: number, queueItemId: string) => void,
+) {
   const lastRef = useRef<number | null>(null);
 
   const emit = useCallback(() => {
-    if (!engine || !ready || !onTick) return;
+    if (!engine || !readyItemId || !onTick) return;
     const position = engine.position();
     if (position === lastRef.current) return;
     lastRef.current = position;
-    onTick(position);
-  }, [engine, ready, onTick]);
+    onTick(position, readyItemId);
+  }, [engine, readyItemId, onTick]);
 
   useEffect(() => {
     lastRef.current = null;
@@ -230,7 +234,7 @@ function PlayerAudio({
   const positionSeconds = loadedState?.positionSeconds ?? 0;
   const gain = loadedState?.vocalsGain ?? 0;
   const { acquire: acquireWake, release: releaseWake } = useWakeLock();
-  const emitTick = usePositionTicks(engine, ready, onTick);
+  const emitTick = usePositionTicks(engine, ready ? loadedItemId : null, onTick);
 
   const isAudible = useCallback(() => running && !!engine?.isPlaying(), [running, engine]);
   const onVisible = useCallback(() => {

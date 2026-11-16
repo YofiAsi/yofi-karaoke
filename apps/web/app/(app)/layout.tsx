@@ -15,6 +15,7 @@ import { nameUrlFor } from "@/lib/returnPath";
 import { loadStoredUser, validateStoredUser } from "@/lib/user";
 import { isCurrentHost, isPlayerDevice } from "@/lib/roles";
 import { withTick } from "@/lib/playbackTick";
+import { clockForItem, lyricsPositionFor, type PlayerTick } from "@/lib/lyricsPosition";
 import { usePositionClock } from "@/lib/usePositionClock";
 import { useSocket } from "@/lib/socket";
 import { parseLrc, type LrcLine } from "@/lib/lrc";
@@ -44,7 +45,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const [progress, setProgress] = useState<Map<string, SongProgressEvent>>(() => new Map());
   const [lrcLines, setLrcLines] = useState<LrcLine[]>([]);
   const [plainLyrics, setPlainLyrics] = useState<string | null>(null);
-  const [audioPosition, setAudioPosition] = useState<number | null>(null);
+  const [playerTick, setPlayerTick] = useState<PlayerTick | null>(null);
   const [lyricsVersion, setLyricsVersion] = useState(0);
   const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
   const [lyricsSource, setLyricsSource] = useState<string | null>(null);
@@ -143,8 +144,12 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const displayedPlayback = withTick(playbackState, lastTick);
 
   useEffect(() => {
-    if (!isPlayer) setAudioPosition(null);
+    if (!isPlayer) setPlayerTick(null);
   }, [isPlayer]);
+
+  const onPlayerTick = useCallback((seconds: number, queueItemId: string) => {
+    setPlayerTick({ queueItemId, seconds });
+  }, []);
 
   useEffect(() => {
     if (!isHost) return;
@@ -181,6 +186,8 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   }, [currentSong?.id, currentSong?.hasLyrics, lyricsVersion]);
 
   const current = queue?.current ?? null;
+  const currentItemId = current?.id ?? null;
+  const lyricsPosition = lyricsPositionFor(currentItemId, isPlayer ? playerTick : null, displayedPlayback);
   const audioSource = current?.song.hasInstrumental
     ? { queueItemId: current.id, songId: current.song.id, hasVocals: current.song.hasVocals }
     : null;
@@ -200,10 +207,9 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         lyricsOffsetMs,
         lyricsSource,
         setLyricsOffsetMs,
-        audioPosition: isPlayer ? audioPosition : null,
-        setAudioPosition,
+        lyricsPosition,
         refetchQueue: fetchQueue,
-        positionClock: isPlayer ? null : clock.clock,
+        positionClock: isPlayer ? null : clockForItem(currentItemId, clock.clock),
         failedVocalsSongId,
       }}
     >
@@ -212,7 +218,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         isPlayer={isPlayer}
         source={audioSource}
         playbackState={playbackState}
-        onTick={setAudioPosition}
+        onTick={onPlayerTick}
         onVocalsFailed={setFailedVocalsSongId}
       />
       {children}
