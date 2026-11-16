@@ -28,9 +28,12 @@ const POSITION_REPORT_MS = 1000;
 const TICK_MS = 200;
 const GESTURE_EVENTS = ["click", "touchend", "keydown"] as const;
 
-function gainForLoadedItem(playbackState: PlaybackStateView | null, loadedItemId: string | null): number {
-  if (!playbackState || playbackState.currentQueueItemId !== loadedItemId) return 0;
-  return playbackState.vocalsGain;
+function stateForLoadedItem(
+  playbackState: PlaybackStateView | null,
+  loadedItemId: string | null,
+): PlaybackStateView | null {
+  if (!playbackState || !loadedItemId || playbackState.currentQueueItemId !== loadedItemId) return null;
+  return playbackState;
 }
 
 function toStemSource(source: AudioSource | null): StemSource | null {
@@ -219,11 +222,13 @@ function PlayerAudio({
     onEnded: reportEnded,
     onVocalsFailed,
   });
+  const loadedState = stateForLoadedItem(playbackState, loadedItemId);
   const ready = status === "ready" && !!engine;
-  const isPlaying = playbackState?.isPlaying ?? false;
+  const isPlaying = loadedState?.isPlaying ?? false;
   const isPlayingRef = useLatestRef(isPlaying);
-  const positionSeconds = playbackState?.positionSeconds ?? 0;
-  const gain = gainForLoadedItem(playbackState, loadedItemId);
+  const hasLoadedState = loadedState !== null;
+  const positionSeconds = loadedState?.positionSeconds ?? 0;
+  const gain = loadedState?.vocalsGain ?? 0;
   const { acquire: acquireWake, release: releaseWake } = useWakeLock();
   const emitTick = usePositionTicks(engine, ready, onTick);
 
@@ -243,12 +248,12 @@ function PlayerAudio({
   useEffect(() => engine?.setVocalsGain(gain), [engine, gain]);
 
   useEffect(() => {
-    if (!ready || !engine) return;
+    if (!ready || !engine || !hasLoadedState) return;
     if (!shouldSeekPlayer(engine.position(), positionSeconds, recentReportsRef.current)) return;
     engine.seek(positionSeconds);
     if (isPlayingRef.current) engine.play();
     emitTick();
-  }, [ready, engine, positionSeconds, isPlayingRef, emitTick]);
+  }, [ready, engine, hasLoadedState, positionSeconds, isPlayingRef, emitTick]);
 
   useEffect(() => {
     if (!ready || !engine) return;
