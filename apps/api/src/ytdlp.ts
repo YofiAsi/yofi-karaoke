@@ -11,6 +11,10 @@ export interface YtDlpSearchEntry {
   thumbnails?: Array<{ url: string; width?: number; height?: number }>;
   thumbnail?: string;
   artist?: string;
+  artists?: string[];
+  track?: string;
+  album?: string;
+  creator?: string;
 }
 
 export async function ytdlpSearch(query: string, count = 10): Promise<YtDlpSearchEntry[]> {
@@ -32,6 +36,25 @@ export async function ytdlpInfo(videoId: string): Promise<YtDlpSearchEntry> {
     `https://youtu.be/${videoId}`,
   ]);
   return JSON.parse(stdout) as YtDlpSearchEntry;
+}
+
+export interface TrackMetadata {
+  track: string | null;
+  trackArtist: string | null;
+  album: string | null;
+}
+
+export function pickTrackMetadata(info: YtDlpSearchEntry): TrackMetadata {
+  return {
+    track: nonEmpty(info.track),
+    trackArtist: nonEmpty(info.artists?.[0]) ?? nonEmpty(info.artist) ?? nonEmpty(info.creator),
+    album: nonEmpty(info.album),
+  };
+}
+
+function nonEmpty(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 }
 
 function runYtdlp(args: string[]): Promise<{ stdout: string; stderr: string }> {

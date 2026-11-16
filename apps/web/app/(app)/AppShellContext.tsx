@@ -16,6 +16,8 @@ export interface AppShellState {
   progress: Map<string, SongProgressEvent>;
   lrcLines: LrcLine[];
   plainLyrics: string | null;
+  lyricsOffsetMs: number;
+  setLyricsOffsetMs: (offsetMs: number) => void;
   audioPosition: number | null;
   setAudioPosition: (pos: number) => void;
   refetchQueue: () => Promise<void>;

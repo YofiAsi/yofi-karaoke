@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { User, PlaybackStateView } from "@karaoke/shared";
 import { api } from "@/lib/api";
 
@@ -8,14 +8,30 @@ interface HostControlsProps {
   user: User;
   playbackState: PlaybackStateView | null;
   currentSongDuration?: number;
+  currentSongId?: string;
+  lyricsOffsetMs?: number;
+  onLyricsOffsetChange?: (offsetMs: number) => void;
+}
+
+const OFFSET_STEP_MS = 500;
+
+function formatOffset(offsetMs: number): string {
+  const seconds = (offsetMs / 1000).toFixed(1);
+  return offsetMs > 0 ? `+${seconds}s` : `${seconds}s`;
 }
 
 export function HostControls({
   user,
   playbackState,
   currentSongDuration,
+  currentSongId,
+  lyricsOffsetMs = 0,
+  onLyricsOffsetChange,
 }: HostControlsProps) {
   const [seekValue, setSeekValue] = useState<number | null>(null);
+  const [refetchState, setRefetchState] = useState<"idle" | "sent" | "failed">("idle");
+
+  useEffect(() => setRefetchState("idle"), [currentSongId]);
 
   // Only visible when user is the active host
   if (!user.isHost || playbackState?.hostUserId !== user.id) return null;
@@ -42,6 +58,27 @@ export function HostControls({
   async function handleSeekCommit(value: number) {
     await api.post("/api/playback/seek", { positionSeconds: value }).catch(console.error);
     setSeekValue(null);
+  }
+
+  async function handleRefetchLyrics() {
+    if (!currentSongId) return;
+    try {
+      await api.post(`/api/songs/${currentSongId}/lyrics/refetch`);
+      setRefetchState("sent");
+    } catch (err) {
+      console.error(err);
+      setRefetchState("failed");
+    }
+  }
+
+  async function handleOffsetStep(deltaMs: number) {
+    if (!currentSongId) return;
+    const offsetMs = lyricsOffsetMs + deltaMs;
+    onLyricsOffsetChange?.(offsetMs);
+    await api.post(`/api/songs/${currentSongId}/lyrics/offset`, { offsetMs }).catch((err) => {
+      console.error(err);
+      onLyricsOffsetChange?.(lyricsOffsetMs);
+    });
   }
 
   return (
@@ -105,6 +142,35 @@ export function HostControls({
           className="w-full accent-white"
           aria-label="Seek"
         />
+      )}
+
+      {currentSongId && (
+        <div className="flex items-center justify-between gap-2 text-sm text-neutral-300">
+          <div className="flex items-center gap-1" aria-label="Lyrics timing">
+            <button
+              onClick={() => handleOffsetStep(-OFFSET_STEP_MS)}
+              aria-label="Show lyrics 0.5 seconds earlier"
+              className="w-9 h-9 rounded-full bg-neutral-700 hover:bg-neutral-600 active:bg-neutral-500 text-white"
+            >
+              −
+            </button>
+            <span className="w-14 text-center tabular-nums">{formatOffset(lyricsOffsetMs)}</span>
+            <button
+              onClick={() => handleOffsetStep(OFFSET_STEP_MS)}
+              aria-label="Show lyrics 0.5 seconds later"
+              className="w-9 h-9 rounded-full bg-neutral-700 hover:bg-neutral-600 active:bg-neutral-500 text-white"
+            >
+              +
+            </button>
+          </div>
+          <button
+            onClick={handleRefetchLyrics}
+            disabled={refetchState === "sent"}
+            className="rounded-full border border-neutral-600 px-3 py-1.5 hover:bg-neutral-700 disabled:opacity-50"
+          >
+            {refetchState === "sent" ? "Searching lyrics…" : refetchState === "failed" ? "Retry lyrics search" : "Find lyrics again"}
+          </button>
+        </div>
       )}
     </div>
   );

@@ -19,7 +19,10 @@ const EnvSchema = z.object({
   SEPARATE_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
   DOWNLOAD_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
   LRCLIB_BASE_URL: z.string().url().default("https://lrclib.net"),
-  LRCLIB_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+  LRCLIB_TIMEOUT_MS: z.coerce.number().int().positive().default(8_000),
+  LRCLIB_MIN_INTERVAL_MS: z.coerce.number().int().nonnegative().default(1_000),
+  LRCLIB_MAX_RETRIES: z.coerce.number().int().nonnegative().default(2),
+  LYRICS_OVH_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
 });
 
 export const env = EnvSchema.parse(process.env);

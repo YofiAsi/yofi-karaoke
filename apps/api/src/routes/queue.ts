@@ -11,7 +11,7 @@ import {
 import { prisma } from "../db.js";
 import { requireUser } from "../auth/userCookie.js";
 import { requireCurrentHost } from "../auth/requireCurrentHost.js";
-import { ytdlpInfo } from "../ytdlp.js";
+import { pickTrackMetadata, ytdlpInfo } from "../ytdlp.js";
 import { isYtVideoUnavailableMessage } from "../ytdlp/isVideoUnavailable.js";
 import { enqueueProcessSong } from "../jobs/enqueueProcessSong.js";
 
@@ -130,6 +130,7 @@ export async function registerQueueRoutes(app: FastifyInstance): Promise<void> {
             channel: info.channel ?? info.uploader ?? "Unknown",
             durationSeconds: duration,
             thumbnailUrl: thumb,
+            ...pickTrackMetadata(info),
           },
         });
         needsJob = true;
