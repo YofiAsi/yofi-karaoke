@@ -10,6 +10,15 @@ import { queueSong } from "../queue/addition.js";
 
 const MISSING_LYRICS_REFETCH_SPACING_MS = 20_000;
 const MAX_LYRICS_OFFSET_MS = 30_000;
+export const MAX_MANUAL_LYRICS_CHARS = 10_000;
+
+const ManualLyricsBodySchema = z.object({
+  text: z.string().trim().min(1).max(MAX_MANUAL_LYRICS_CHARS),
+});
+
+function cleanPastedLyrics(text: string): string {
+  return text.replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
 
 const LyricsOffsetBodySchema = z.object({
   offsetMs: z.number().int().min(-MAX_LYRICS_OFFSET_MS).max(MAX_LYRICS_OFFSET_MS),
@@ -65,7 +74,7 @@ export async function registerLibraryRoutes(app: FastifyInstance): Promise<void>
   app.post("/api/songs/lyrics/refetch-missing", async (req, reply) => {
     await requireCurrentHost(req);
     const songs = await prisma.song.findMany({
-      where: { lyricsSource: "none" },
+      where: { lyricsLrc: null },
       select: { id: true },
       orderBy: { createdAt: "desc" },
     });
@@ -74,6 +83,25 @@ export async function registerLibraryRoutes(app: FastifyInstance): Promise<void>
       MISSING_LYRICS_REFETCH_SPACING_MS,
     );
     return reply.code(202).send({ enqueued: songs.length });
+  });
+
+  app.post("/api/songs/:songId/lyrics/manual", {
+    schema: { params: SongParamsSchema, body: ManualLyricsBodySchema },
+    handler: async (req, reply) => {
+      await requireCurrentHost(req);
+      const { songId } = req.params as z.infer<typeof SongParamsSchema>;
+      const { text } = req.body as z.infer<typeof ManualLyricsBodySchema>;
+      const updated = await prisma.song.updateMany({
+        where: { id: songId },
+        data: { lyricsPlain: cleanPastedLyrics(text), lyricsLrc: null, lyricsSource: "manual", lyricsMissReason: null },
+      });
+      if (updated.count === 0) {
+        return reply.code(404).send({ error: "song_not_found" });
+      }
+      await notify(PgNotifyChannels.queueUpdated, { reason: "lyrics_manual", songId });
+      await enqueueRefetchLyrics([songId]);
+      return reply.code(202).send({ source: "manual", aligning: true });
+    },
   });
 
   app.post("/api/songs/:songId/lyrics/offset", {

@@ -30,4 +30,12 @@ describe("worker env", () => {
     const env = parseEnv({ ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x" });
     expect(env.SEPARATE_PY_PATH.split(path.sep).join("/")).toMatch(/apps\/worker\/python\/separate\.py$/);
   });
+
+  it("keeps transcription off unless asked for", () => {
+    const env = parseEnv({ ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x" });
+    expect(env.TRANSCRIBE_BACKEND).toBe("none");
+    expect(env.TRANSCRIBE_PY_PATH.split(path.sep).join("/")).toMatch(/apps\/worker\/python\/transcribe\.py$/);
+    expect(parseEnv({ ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x", TRANSCRIBE_BACKEND: "cuda" }).TRANSCRIBE_BACKEND).toBe("cuda");
+    expect(() => parseEnv({ ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x", TRANSCRIBE_BACKEND: "rocm" })).toThrow();
+  });
 });

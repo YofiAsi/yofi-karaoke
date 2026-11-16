@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { LrcLine } from "@/lib/lrc";
 import { activeLineIndex } from "@/lib/lyricsTiming";
+import { isAutomaticLyrics } from "@/lib/manualLyrics";
 import { positionAt, type PositionClock } from "@/lib/positionClock";
 
 interface LyricsViewProps {
@@ -13,6 +14,7 @@ interface LyricsViewProps {
   offsetMs?: number;
   clock?: PositionClock | null;
   durationSeconds?: number;
+  source?: string | null;
 }
 
 function useClockLineIndex(
@@ -81,6 +83,14 @@ function ResumeAutoScrollChip({ onResume }: { onResume: () => void }) {
   );
 }
 
+function AutoLyricsLabel() {
+  return (
+    <p dir="rtl" className="shrink-0 px-1 pt-1 text-xs text-neutral-500 text-start">
+      מילים אוטומטיות
+    </p>
+  );
+}
+
 export function LyricsView({
   lines,
   positionSeconds,
@@ -89,6 +99,7 @@ export function LyricsView({
   offsetMs = 0,
   clock = null,
   durationSeconds,
+  source,
 }: LyricsViewProps) {
   const activeRef = useRef<HTMLParagraphElement>(null);
   const clockIdx = useClockLineIndex(lines, offsetMs, clock, durationSeconds);
@@ -146,6 +157,7 @@ export function LyricsView({
 
   return (
     <>
+      {isAutomaticLyrics(source) && <AutoLyricsLabel />}
       <div className={scrollAreaClass}>
         {lines.map((line, i) => (
           <p

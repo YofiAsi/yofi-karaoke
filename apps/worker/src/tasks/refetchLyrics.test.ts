@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LyricsResult } from "../steps/lyrics.js";
 
-const { mockQuery, mockNotify, mockFetchLyrics } = vi.hoisted(() => ({
+const { mockQuery, mockNotify, mockFetchLyrics, mockAddTimed, mockEnabled } = vi.hoisted(() => ({
   mockQuery: vi.fn(),
   mockNotify: vi.fn(),
   mockFetchLyrics: vi.fn(),
+  mockAddTimed: vi.fn(),
+  mockEnabled: vi.fn(() => false),
 }));
 
 vi.mock("../env.js", () => ({ env: {} }));
@@ -12,6 +14,15 @@ vi.mock("../db.js", () => ({ pool: { query: mockQuery }, notify: mockNotify }));
 vi.mock("../steps/lyrics.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../steps/lyrics.js")>()),
   fetchLyrics: mockFetchLyrics,
+}));
+
+vi.mock("../steps/timedLyrics.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../steps/timedLyrics.js")>()),
+  addTimedLyrics: mockAddTimed,
+  transcriptionEnabled: mockEnabled,
+}));
+vi.mock("../storage/stemFile.js", () => ({
+  withStemFile: (key: string, use: (file: string) => Promise<unknown>) => use(`/stems/${key}`),
 }));
 
 import { decideRefetch, refetchLyrics } from "./refetchLyrics.js";
@@ -48,6 +59,19 @@ describe("decideRefetch", () => {
     expect(decideRefetch(storedPlain, synced)).toBe("save");
     expect(decideRefetch(storedNone, notFound)).toBe("save");
   });
+
+  const whisper: LyricsResult = { ...notFound, syncedLyrics: "[00:01.00]heard", source: "whisper", missReason: null };
+  const aligned: LyricsResult = { ...plainOnly, syncedLyrics: "[00:01.00]a", source: "aligned" };
+
+  it("ranks LRCLIB synced over aligned over Whisper over plain", () => {
+    const storedLrclib = { ...storedSynced, lyricsSource: "lrclib" };
+    const storedWhisper = { lyricsLrc: "[00:01.00]heard", lyricsPlain: null, lyricsSource: "whisper" };
+    expect(decideRefetch(storedLrclib, aligned)).toBe("keep");
+    expect(decideRefetch(storedLrclib, whisper)).toBe("keep");
+    expect(decideRefetch(storedWhisper, aligned)).toBe("save");
+    expect(decideRefetch(storedWhisper, plainOnly)).toBe("keep");
+    expect(decideRefetch(storedPlain, whisper)).toBe("save");
+  });
 });
 
 describe("refetchLyrics task", () => {
@@ -56,7 +80,8 @@ describe("refetchLyrics task", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockQuery.mockResolvedValue({ rows: [row] });
+    mockEnabled.mockReturnValue(false);
+    mockQuery.mockResolvedValue({ rows: [row], rowCount: 1 });
   });
 
   it("returns without fetching when the song no longer exists", async () => {
@@ -83,7 +108,42 @@ describe("refetchLyrics task", () => {
     mockFetchLyrics.mockResolvedValueOnce(synced);
     await refetchLyrics({ songId: "s1" }, helpers);
     expect(mockQuery).toHaveBeenCalledTimes(2);
-    expect(mockQuery.mock.calls[1][1]).toEqual(["s1", synced.syncedLyrics, synced.plainLyrics, "lrclib", null]);
+    expect(mockQuery.mock.calls[1][1].slice(0, 5)).toEqual(["s1", synced.syncedLyrics, synced.plainLyrics, "lrclib", null]);
     expect(mockNotify).toHaveBeenCalledOnce();
   });
+
+  it("transcribes the stored vocals stem after a LRCLIB miss", async () => {
+    mockEnabled.mockReturnValue(true);
+    mockQuery.mockResolvedValueOnce({ rows: [{ ...row, ...storedNone, lyricsSource: "none", vocalsObjectKey: "vocals/s1.mp3" }] });
+    mockFetchLyrics.mockResolvedValueOnce(notFound);
+    mockAddTimed.mockResolvedValueOnce(whisperResult);
+    await refetchLyrics({ songId: "s1" }, helpers);
+    expect(mockAddTimed.mock.calls[0][2]).toBe("/stems/vocals/s1.mp3");
+    expect(mockQuery.mock.calls[1][1].slice(0, 4)).toEqual(["s1", whisperResult.syncedLyrics, null, "whisper"]);
+    expect(mockNotify).toHaveBeenCalledOnce();
+  });
+
+  it("aligns pasted lyrics without asking LRCLIB", async () => {
+    mockEnabled.mockReturnValue(true);
+    mockQuery.mockResolvedValueOnce({ rows: [{ ...row, ...storedPlain, lyricsSource: "manual", vocalsObjectKey: "vocals/s1.mp3" }] });
+    mockAddTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => ({ ...lyrics, syncedLyrics: "[00:02.00]old" }));
+    await refetchLyrics({ songId: "s1" }, helpers);
+    expect(mockFetchLyrics).not.toHaveBeenCalled();
+    expect(mockQuery.mock.calls[1][1].slice(0, 4)).toEqual(["s1", "[00:02.00]old", "old", "manual"]);
+  });
+
+  it("drops the result when the lyrics changed meanwhile", async () => {
+    mockFetchLyrics.mockResolvedValueOnce(synced);
+    mockQuery.mockResolvedValueOnce({ rows: [row] }).mockResolvedValueOnce({ rowCount: 0 });
+    await refetchLyrics({ songId: "s1" }, helpers);
+    expect(mockNotify).not.toHaveBeenCalled();
+  });
 });
+
+const whisperResult: LyricsResult = {
+  syncedLyrics: "[00:01.00]heard line",
+  plainLyrics: null,
+  source: "whisper",
+  missReason: null,
+  matchedQuery: null,
+};

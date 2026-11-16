@@ -37,6 +37,7 @@ function Assert-Prerequisites {
     if (-not $script:PgBin) { [void]$problems.Add("PostgreSQL server binaries were not found. Run scripts\party\setup.ps1, which downloads them into $($Paths.PgSql).") }
     if (-not (Test-Path $Paths.VenvPython)) { [void]$problems.Add("The GPU Python environment is missing in $($Paths.Venv). Run scripts\party\setup.ps1 first.") }
     if (-not (Test-Path $Paths.YtDlp)) { [void]$problems.Add("yt-dlp is missing from $($Paths.VenvBin). Run scripts\party\setup.ps1 again.") }
+    if (-not (Test-WhisperModels)) { Write-Host "Whisper models are missing from $($Paths.Models); songs without lyrics stay without them until setup.ps1 runs again." -ForegroundColor Yellow }
     if ($Tunnel -and -not (Find-Cloudflared)) { [void]$problems.Add("-Tunnel needs cloudflared. Install it with: winget install Cloudflare.cloudflared") }
     foreach ($port in @($WebPort, $ApiPort, $PgPort)) {
         if (Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue) {
@@ -47,6 +48,13 @@ function Assert-Prerequisites {
         $problems | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
         Stop-WithError "Prerequisites missing"
     }
+}
+
+function Test-WhisperModels {
+    foreach ($name in @("whisper-ivrit-turbo", "whisper-turbo")) {
+        if (-not (Test-Path (Join-Path $Paths.Models "$name\model.bin"))) { return $false }
+    }
+    return $true
 }
 
 function Assert-NotRunning {
@@ -179,6 +187,8 @@ function Set-CommonEnvironment([string]$HostPin, [string]$SessionSecret) {
     $env:SEPARATOR_BACKEND = "cuda"
     $env:PYTHON_BIN = $Paths.VenvPython
     $env:AUDIO_SEP_MODEL_DIR = $Paths.Models
+    $env:TRANSCRIBE_BACKEND = "cuda"
+    $env:WHISPER_MODEL_DIR = $Paths.Models
     $env:WORKER_TMP_DIR = $Paths.Tmp
     $env:YTDLP_JS_RUNTIMES = "node"
     $env:PYTHONUTF8 = "1"
