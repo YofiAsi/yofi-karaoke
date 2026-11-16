@@ -9,6 +9,7 @@ import type {
   SongProgressEvent,
   PlaybackTickEvent,
   User,
+  LyricsWordTimings,
 } from "@karaoke/shared";
 import { api } from "@/lib/api";
 import { nameUrlFor } from "@/lib/returnPath";
@@ -16,6 +17,7 @@ import { loadStoredUser, validateStoredUser } from "@/lib/user";
 import { isCurrentHost, isPlayerDevice } from "@/lib/roles";
 import { withTick } from "@/lib/playbackTick";
 import { clockForItem, lyricsPositionFor, type PlayerTick } from "@/lib/lyricsPosition";
+import { readerForItem, type PlayerPositionReader } from "@/lib/livePosition";
 import { usePositionClock } from "@/lib/usePositionClock";
 import { useSocket } from "@/lib/socket";
 import { parseLrc, type LrcLine } from "@/lib/lrc";
@@ -25,6 +27,7 @@ import { AppShellContext } from "./AppShellContext";
 interface LyricsResponse {
   lrc: string | null;
   plain: string | null;
+  wordTimings?: LyricsWordTimings | null;
   offsetMs?: number;
   source?: string | null;
 }
@@ -45,6 +48,9 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const [progress, setProgress] = useState<Map<string, SongProgressEvent>>(() => new Map());
   const [lrcLines, setLrcLines] = useState<LrcLine[]>([]);
   const [plainLyrics, setPlainLyrics] = useState<string | null>(null);
+  const [wordTimings, setWordTimings] = useState<LyricsWordTimings | null>(null);
+  const [lyricsSongId, setLyricsSongId] = useState<string | null>(null);
+  const [playerReader, setPlayerReader] = useState<PlayerPositionReader | null>(null);
   const [playerTick, setPlayerTick] = useState<PlayerTick | null>(null);
   const [lyricsVersion, setLyricsVersion] = useState(0);
   const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
@@ -162,25 +168,32 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const currentSong = queue?.current?.song ?? null;
 
   useEffect(() => {
-    if (!currentSong?.id || !currentSong.hasLyrics) {
+    const songId = currentSong?.id ?? null;
+    if (!songId || !currentSong?.hasLyrics) {
       setLrcLines([]);
       setPlainLyrics(null);
+      setWordTimings(null);
+      setLyricsSongId(songId);
       setLyricsOffsetMs(0);
       setLyricsSource(null);
       return;
     }
     api
-      .get<LyricsResponse>(`/api/songs/${currentSong.id}/lyrics`)
+      .get<LyricsResponse>(`/api/songs/${songId}/lyrics`)
       .then((res) => {
         const { lines, plain } = toLyricsState(res);
         setLrcLines(lines);
         setPlainLyrics(plain);
+        setWordTimings(res.wordTimings ?? null);
+        setLyricsSongId(songId);
         setLyricsOffsetMs(res.offsetMs ?? 0);
         setLyricsSource(res.source ?? null);
       })
       .catch(() => {
         setLrcLines([]);
         setPlainLyrics(null);
+        setWordTimings(null);
+        setLyricsSongId(songId);
         setLyricsSource(null);
       });
   }, [currentSong?.id, currentSong?.hasLyrics, lyricsVersion]);
@@ -204,12 +217,15 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         progress,
         lrcLines,
         plainLyrics,
+        wordTimings,
+        lyricsSongId,
         lyricsOffsetMs,
         lyricsSource,
         setLyricsOffsetMs,
         lyricsPosition,
         refetchQueue: fetchQueue,
         positionClock: isPlayer ? null : clockForItem(currentItemId, clock.clock),
+        playerPosition: isPlayer ? readerForItem(currentItemId, playerReader) : null,
         failedVocalsSongId,
       }}
     >
@@ -220,6 +236,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         playbackState={playbackState}
         onTick={onPlayerTick}
         onVocalsFailed={setFailedVocalsSongId}
+        onPositionReader={setPlayerReader}
       />
       {children}
       <nav
