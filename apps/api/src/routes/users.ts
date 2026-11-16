@@ -8,7 +8,7 @@ import {
 } from "@karaoke/shared";
 import { prisma } from "../db.js";
 import { setUserCookie, requireUser } from "../auth/userCookie.js";
-import { nameMatches, OLDEST_FIRST } from "../auth/userName.js";
+import { findUserByName, isUniqueViolation, type NamedUser } from "../auth/userName.js";
 import { claimOrConflict, heartbeat, isHostName } from "../host/hostService.js";
 import { authorizeHostPin } from "../host/hostPin.js";
 
@@ -39,25 +39,40 @@ async function claimHost(req: FastifyRequest, reply: FastifyReply, pin: string |
   return reply.code(201).send({ id: outcome.userId, name: outcome.userName, isHost: true });
 }
 
-async function joinAsGuest(req: FastifyRequest, reply: FastifyReply, name: string) {
-  const existing = await prisma.user.findFirst({ where: nameMatches(name), orderBy: OLDEST_FIRST });
-  if (existing?.isHost) {
+async function createGuest(name: string): Promise<NamedUser | null> {
+  try {
+    return await prisma.user.create({ data: { name, isHost: false, lastSeenAt: new Date() } });
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+    return null;
+  }
+}
+
+async function resumeGuest(req: FastifyRequest, reply: FastifyReply, existing: NamedUser) {
+  if (existing.isHost) {
     return reply.code(409).send({ error: "name_taken" });
   }
-  if (existing) {
-    setUserCookie(req, reply, existing.id);
-    await prisma.user.update({
-      where: { id: existing.id },
-      data: { lastSeenAt: new Date() },
-    });
-    return reply.send({ id: existing.id, name: existing.name, isHost: false });
+  setUserCookie(req, reply, existing.id);
+  await prisma.user.update({
+    where: { id: existing.id },
+    data: { lastSeenAt: new Date() },
+  });
+  return reply.send({ id: existing.id, name: existing.name, isHost: false });
+}
+
+async function joinAsGuest(req: FastifyRequest, reply: FastifyReply, name: string) {
+  const existing = await findUserByName(prisma, name);
+  if (existing) return resumeGuest(req, reply, existing);
+
+  const created = await createGuest(name);
+  if (created) {
+    setUserCookie(req, reply, created.id);
+    return reply.code(201).send({ id: created.id, name: created.name, isHost: false });
   }
 
-  const created = await prisma.user.create({
-    data: { name, isHost: false, lastSeenAt: new Date() },
-  });
-  setUserCookie(req, reply, created.id);
-  return reply.code(201).send({ id: created.id, name: created.name, isHost: false });
+  const winner = await findUserByName(prisma, name);
+  if (!winner) throw new Error("user vanished after unique violation");
+  return resumeGuest(req, reply, winner);
 }
 
 export async function registerUserRoutes(app: FastifyInstance): Promise<void> {

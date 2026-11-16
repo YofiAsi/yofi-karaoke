@@ -1,6 +1,6 @@
 import { prisma } from "../db.js";
 import { env } from "../env.js";
-import { nameMatches, OLDEST_FIRST } from "../auth/userName.js";
+import { findUserByName, isUniqueViolation } from "../auth/userName.js";
 
 export interface HostClaimResult {
   kind: "created" | "taken_over" | "already_host";
@@ -29,13 +29,19 @@ export function isStale(lastHeartbeat: Date | null | undefined, now = new Date()
 }
 
 export async function claimOrConflict(): Promise<HostOutcome> {
+  try {
+    return await claimInTransaction();
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+    return claimInTransaction();
+  }
+}
+
+async function claimInTransaction(): Promise<HostOutcome> {
   const now = new Date();
   const name = hostDisplayName();
   return prisma.$transaction(async (tx) => {
-    const existingHost = await tx.user.findFirst({
-      where: nameMatches(name),
-      orderBy: OLDEST_FIRST,
-    });
+    const existingHost = await findUserByName(tx, name);
 
     const playback = await tx.playbackState.findUnique({ where: { id: 1 } });
     const currentHostStale = isStale(playback?.hostLastHeartbeatAt ?? null, now);

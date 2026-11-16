@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { Prisma } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
 // vi.hoisted — values that must exist before vi.mock factories run
 // ---------------------------------------------------------------------------
 const { mockTx, mockPrisma } = vi.hoisted(() => {
   const mockTx = {
+    $queryRaw: vi.fn(),
     user: {
-      findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
     },
@@ -130,7 +131,7 @@ describe("claimOrConflict()", () => {
   });
 
   it("creates a new host when no user with that name exists", async () => {
-    mockTx.user.findFirst.mockResolvedValue(null);
+    mockTx.$queryRaw.mockResolvedValue([]);
     mockTx.playbackState.findUnique.mockResolvedValue(null);
     mockTx.user.create.mockResolvedValue({ id: "u1", name: "Host" });
     mockTx.playbackState.update.mockResolvedValue({});
@@ -146,7 +147,7 @@ describe("claimOrConflict()", () => {
   });
 
   it("takes over when user exists and heartbeat is stale (no playback row)", async () => {
-    mockTx.user.findFirst.mockResolvedValue({ id: "u2", name: "Host" });
+    mockTx.$queryRaw.mockResolvedValue([{ id: "u2", name: "Host" }]);
     // no playback row → hostLastHeartbeatAt is null → stale
     mockTx.playbackState.findUnique.mockResolvedValue(null);
     mockTx.user.update.mockResolvedValue({});
@@ -161,7 +162,7 @@ describe("claimOrConflict()", () => {
 
   it("takes over when user exists and heartbeat has expired", async () => {
     const staleTime = new Date(new Date("2026-04-22T12:00:00.000Z").getTime() - 60_000); // 60 s ago — definitely stale
-    mockTx.user.findFirst.mockResolvedValue({ id: "u3", name: "Host" });
+    mockTx.$queryRaw.mockResolvedValue([{ id: "u3", name: "Host" }]);
     mockTx.playbackState.findUnique.mockResolvedValue({
       id: 1,
       hostUserId: "someone-else",
@@ -178,7 +179,7 @@ describe("claimOrConflict()", () => {
 
   it("returns conflict when user exists, heartbeat is fresh, and a different user is host", async () => {
     const freshTime = new Date(new Date("2026-04-22T12:00:00.000Z").getTime() - 5_000); // 5 s ago — fresh
-    mockTx.user.findFirst.mockResolvedValue({ id: "u4", name: "Host" });
+    mockTx.$queryRaw.mockResolvedValue([{ id: "u4", name: "Host" }]);
     mockTx.playbackState.findUnique.mockResolvedValue({
       id: 1,
       hostUserId: "other-user-id", // different from u4
@@ -193,26 +194,51 @@ describe("claimOrConflict()", () => {
   });
 
   it("looks the host up case insensitively so differently cased names map to one user", async () => {
-    mockTx.user.findFirst.mockResolvedValue({ id: "u6", name: "host" });
+    mockTx.$queryRaw.mockResolvedValue([{ id: "u6", name: "host" }]);
     mockTx.playbackState.findUnique.mockResolvedValue(null);
     mockTx.user.update.mockResolvedValue({});
     mockTx.playbackState.update.mockResolvedValue({});
 
     const result = await claimOrConflict();
 
-    expect(mockTx.user.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { name: { equals: "Host", mode: "insensitive" } },
-        orderBy: { createdAt: "asc" },
-      }),
-    );
+    const [sqlParts, lookedUpName] = mockTx.$queryRaw.mock.calls[0];
+    expect(sqlParts.join("?")).toMatch(/lower\(name\) = lower\(\?\)/);
+    expect(sqlParts.join("?")).toMatch(/ORDER BY "createdAt" ASC/);
+    expect(lookedUpName).toBe("Host");
     expect(result).toEqual({ kind: "taken_over", userId: "u6", userName: "host" });
     expect(mockTx.user.create).not.toHaveBeenCalled();
   });
 
+  it("retries once when a concurrent claim created the host row first", async () => {
+    const uniqueViolation = new Prisma.PrismaClientKnownRequestError("duplicate", {
+      code: "P2002",
+      clientVersion: "test",
+    });
+    mockPrisma.$transaction
+      .mockRejectedValueOnce(uniqueViolation)
+      .mockImplementationOnce((cb: (tx: typeof mockTx) => unknown) => cb(mockTx));
+    mockTx.$queryRaw.mockResolvedValue([{ id: "u7", name: "Host", isHost: true }]);
+    mockTx.playbackState.findUnique.mockResolvedValue({
+      id: 1,
+      hostUserId: "u7",
+      hostLastHeartbeatAt: new Date(BASE_DATE.getTime() - 1_000),
+    });
+
+    const result = await claimOrConflict();
+
+    expect(result).toEqual({ kind: "already_host", userId: "u7", userName: "Host" });
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not swallow errors other than unique violations", async () => {
+    mockPrisma.$transaction.mockRejectedValueOnce(new Error("db down"));
+    await expect(claimOrConflict()).rejects.toThrow("db down");
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
   it("returns already_host when user exists and is already the current host with a fresh heartbeat", async () => {
     const freshTime = new Date(new Date("2026-04-22T12:00:00.000Z").getTime() - 5_000); // 5 s ago
-    mockTx.user.findFirst.mockResolvedValue({ id: "u5", name: "Host" });
+    mockTx.$queryRaw.mockResolvedValue([{ id: "u5", name: "Host" }]);
     mockTx.playbackState.findUnique.mockResolvedValue({
       id: 1,
       hostUserId: "u5", // same as existing user
