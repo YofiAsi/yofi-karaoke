@@ -47,14 +47,13 @@ function lyricsRank(synced: string | null, plain: string | null): number {
   return 0;
 }
 
-async function loadStoredLyrics(songId: string): Promise<StoredLyricsRow> {
+async function loadStoredLyrics(songId: string): Promise<StoredLyricsRow | null> {
   const { rows } = await pool.query<StoredLyricsRow>(
     `SELECT title, artist, track, "trackArtist", "durationSeconds", "lyricsLrc", "lyricsPlain"
        FROM "Song" WHERE id = $1`,
     [songId],
   );
-  if (rows.length === 0) throw new Error(`song ${songId} not found`);
-  return rows[0];
+  return rows[0] ?? null;
 }
 
 export const refetchLyrics: Task = async (payload, helpers) => {
@@ -62,6 +61,10 @@ export const refetchLyrics: Task = async (payload, helpers) => {
   if (!songId) throw new Error("songId missing from payload");
 
   const stored = await loadStoredLyrics(songId);
+  if (!stored) {
+    helpers.logger.warn(`refetchLyrics ${songId} skipped: song no longer exists`);
+    return;
+  }
   const lyrics = await fetchLyrics(stored, (msg) => helpers.logger.info(`refetchLyrics ${songId} ${msg}`));
   const decision = decideRefetch(stored, lyrics);
 
