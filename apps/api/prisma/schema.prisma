@@ -54,6 +54,7 @@ enum QueueState {
   failed
 }
 
+// Partial unique index "QueueItem_songId_active_key" (one queued, processing or ready item per song) lives in SQL only, see migration 20261117000000_vocals_and_reset.
 model QueueItem {
   id                String     @id @default(uuid()) @db.Uuid
   songId            String     @db.Uuid

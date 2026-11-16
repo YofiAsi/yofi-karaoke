@@ -1,28 +1,47 @@
-/* Manual one off cleanup: deletes every stored stem object. Run with `corepack pnpm --filter api purge:objects --yes`. */
-import { deleteObjectKeys, listObjectKeys } from "../minio.js";
+/* Manual cleanup of stem objects no Song references. Dry run by default; `corepack pnpm --filter api purge:objects --yes` deletes. */
+import { prisma } from "../db.js";
+import { deleteObjectKeys, listObjects, type StoredObject } from "../minio.js";
+import { planPurge, PURGE_MIN_AGE_MS } from "./purgePlan.js";
 
 const STEM_PREFIXES = ["instrumentals/", "vocals/"];
 const CONFIRM_FLAG = "--yes";
 
-async function collectStemKeys(): Promise<string[]> {
-  const keys: string[] = [];
+async function listStemObjects(): Promise<StoredObject[]> {
+  const objects: StoredObject[] = [];
   for (const prefix of STEM_PREFIXES) {
-    keys.push(...(await listObjectKeys(prefix)));
+    objects.push(...(await listObjects(prefix)));
   }
-  return keys;
+  return objects;
+}
+
+async function loadReferencedKeys(): Promise<Set<string>> {
+  const songs = await prisma.song.findMany({
+    select: { instrumentalObjectKey: true, vocalsObjectKey: true },
+  });
+  const keys = songs.flatMap((s) => [s.instrumentalObjectKey, s.vocalsObjectKey]);
+  return new Set(keys.filter((k): k is string => !!k));
 }
 
 async function main(): Promise<void> {
-  const keys = await collectStemKeys();
+  const objects = await listStemObjects();
+  const plan = planPurge(objects, await loadReferencedKeys(), new Date());
+  const minutes = PURGE_MIN_AGE_MS / 60_000;
+  console.log(
+    `found ${objects.length} objects under ${STEM_PREFIXES.join(", ")}: ` +
+      `kept ${plan.keptReferenced} referenced by a song, kept ${plan.keptRecent} newer than ${minutes} minutes, ` +
+      `${plan.deleteKeys.length} unreferenced`,
+  );
   if (!process.argv.includes(CONFIRM_FLAG)) {
-    console.log(`found ${keys.length} objects under ${STEM_PREFIXES.join(", ")}; rerun with ${CONFIRM_FLAG} to delete them`);
+    console.log(`dry run; rerun with ${CONFIRM_FLAG} to delete the ${plan.deleteKeys.length} unreferenced objects`);
     return;
   }
-  const deleted = await deleteObjectKeys(keys);
-  console.log(`deleted ${deleted} objects under ${STEM_PREFIXES.join(", ")}`);
+  const deleted = await deleteObjectKeys(plan.deleteKeys);
+  console.log(`deleted ${deleted} objects, kept ${plan.keptReferenced + plan.keptRecent}`);
 }
 
-main().catch((err) => {
-  console.error("purge failed", err);
-  process.exit(1);
-});
+main()
+  .catch((err) => {
+    console.error("purge failed", err);
+    process.exitCode = 1;
+  })
+  .finally(() => prisma.$disconnect());

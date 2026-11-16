@@ -1,23 +1,22 @@
-import { run } from "graphile-worker";
-import { PgNotifyChannels } from "@karaoke/shared";
-import { notify } from "./db.js";
+import { makeWorkerUtils, run, type WorkerUtils } from "graphile-worker";
 import { env } from "./env.js";
-import { failStaleJobs } from "./queueState.js";
-import { processSong } from "./tasks/processSong.js";
+import { recoverStaleJobs } from "./recovery.js";
+import { processingSongIds, processSong } from "./tasks/processSong.js";
 import { refetchLyrics } from "./tasks/refetchLyrics.js";
 
-const STALE_JOB_MINUTES = 30;
-const STALE_JOB_MESSAGE = "worker restarted while processing";
+const RECOVERY_INTERVAL_MS = 60_000;
 
-async function recoverStaleJobs(): Promise<void> {
-  const songIds = await failStaleJobs(STALE_JOB_MINUTES, STALE_JOB_MESSAGE);
-  if (songIds.length === 0) return;
-  console.log(JSON.stringify({ msg: "marked stale jobs failed", songIds }));
-  await notify(PgNotifyChannels.queueUpdated, { reason: "stale_jobs" });
+function scheduleRecovery(utils: WorkerUtils): NodeJS.Timeout {
+  return setInterval(() => {
+    recoverStaleJobs(utils, processingSongIds()).catch((err) => console.error("stale job recovery failed", err));
+  }, RECOVERY_INTERVAL_MS);
 }
 
 async function main(): Promise<void> {
-  await recoverStaleJobs();
+  const utils = await makeWorkerUtils({ connectionString: env.DATABASE_URL });
+  await utils.migrate();
+  await recoverStaleJobs(utils, []);
+
   const runner = await run({
     connectionString: env.DATABASE_URL,
     concurrency: 1,
@@ -28,6 +27,7 @@ async function main(): Promise<void> {
       refetch_lyrics: refetchLyrics,
     },
   });
+  const recoveryTimer = scheduleRecovery(utils);
 
   console.log(
     JSON.stringify({
@@ -38,7 +38,12 @@ async function main(): Promise<void> {
     }),
   );
 
-  await runner.promise;
+  try {
+    await runner.promise;
+  } finally {
+    clearInterval(recoveryTimer);
+    await utils.release();
+  }
 }
 
 main().catch((err) => {

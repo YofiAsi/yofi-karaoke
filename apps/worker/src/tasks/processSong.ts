@@ -10,6 +10,12 @@ import { uploadStem } from "../minioUpload.js";
 import { markSongFailed, markSongReady } from "../queueState.js";
 import { decideFailure, type FailureDecision } from "./failurePolicy.js";
 import { saveLyrics } from "./refetchLyrics.js";
+
+const activeSongIds = new Set<string>();
+
+export function processingSongIds(): string[] {
+  return [...activeSongIds];
+}
 import {
   PgNotifyChannels,
   type SongProgressEvent,
@@ -44,7 +50,7 @@ async function reportProgress(
         SET "step" = $2::"ProcessingStep",
             "progressPct" = $3,
             "errorMessage" = $4,
-            "startedAt" = COALESCE(j."startedAt", NOW()),
+            "startedAt" = CASE WHEN $2 = 'downloading' THEN NOW() ELSE COALESCE(j."startedAt", NOW()) END,
             "completedAt" = CASE WHEN $2 IN ('done','error') THEN NOW() ELSE j."completedAt" END
        FROM latest
       WHERE j.id = latest.id`,
@@ -154,6 +160,7 @@ export const processSong: Task = async (payload, helpers) => {
   const workDir = path.join(env.WORKER_TMP_DIR, songId);
   helpers.logger.info(`processSong ${songId} start attempt ${helpers.job.attempts}/${helpers.job.max_attempts}`);
 
+  activeSongIds.add(songId);
   try {
     await runPipeline(songId, workDir, helpers);
   } catch (err) {
@@ -161,6 +168,7 @@ export const processSong: Task = async (payload, helpers) => {
     const decision = await handleFailure(songId, message, helpers);
     if (decision !== "unavailable") throw err;
   } finally {
+    activeSongIds.delete(songId);
     await rm(workDir, { recursive: true, force: true }).catch(() => void 0);
   }
 };

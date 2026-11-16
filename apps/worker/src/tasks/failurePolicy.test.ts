@@ -24,6 +24,15 @@ describe("isVideoUnavailableMessage", () => {
     expect(isVideoUnavailableMessage(message)).toBe(true);
   });
 
+  it.each([
+    "ERROR: [youtube] abc: Video unavailable. This content isn't available, try again later.",
+    "ERROR: [youtube] abc: Video unavailable. HTTP Error 429: Too Many Requests",
+    "ERROR: [youtube] abc: Sign in to confirm you're not a bot",
+    "Video unavailable: you have been rate limited",
+  ])("treats temporary blocks as transient: %s", (message) => {
+    expect(isVideoUnavailableMessage(message)).toBe(false);
+  });
+
   it("ignores transient errors", () => {
     expect(isVideoUnavailableMessage("HTTP Error 503: Service Unavailable")).toBe(false);
     expect(isVideoUnavailableMessage("separate.py timed out after 180000ms")).toBe(false);
@@ -37,6 +46,11 @@ describe("decideFailure", () => {
 
   it("is final on the last attempt", () => {
     expect(decideFailure("timeout", { attempts: 3, maxAttempts: 3 })).toBe("final");
+  });
+
+  it("retries a temporary YouTube block", () => {
+    const message = "Video unavailable. This content isn't available, try again later.";
+    expect(decideFailure(message, { attempts: 1, maxAttempts: 3 })).toBe("retry");
   });
 
   it("stops at once for an unavailable video", () => {

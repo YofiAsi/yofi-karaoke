@@ -51,12 +51,19 @@ describe("decideRefetch", () => {
 });
 
 describe("refetchLyrics task", () => {
-  const helpers = { logger: { info: vi.fn() } } as unknown as Parameters<typeof refetchLyrics>[1];
+  const helpers = { logger: { info: vi.fn(), warn: vi.fn() } } as unknown as Parameters<typeof refetchLyrics>[1];
   const row = { title: "A - B", artist: "A", track: null, trackArtist: null, durationSeconds: 200, ...storedSynced };
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuery.mockResolvedValue({ rows: [row] });
+  });
+
+  it("returns without fetching when the song no longer exists", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    await expect(refetchLyrics({ songId: "gone" }, helpers)).resolves.toBeUndefined();
+    expect(mockFetchLyrics).not.toHaveBeenCalled();
+    expect(mockNotify).not.toHaveBeenCalled();
   });
 
   it("throws on a transient miss so graphile retries, without writing", async () => {

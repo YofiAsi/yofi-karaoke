@@ -71,19 +71,24 @@ export async function getObjectStream(
   };
 }
 
-export async function listObjectKeys(prefix: string): Promise<string[]> {
-  const keys: string[] = [];
+export interface StoredObject {
+  key: string;
+  lastModified: Date | null;
+}
+
+export async function listObjects(prefix: string): Promise<StoredObject[]> {
+  const objects: StoredObject[] = [];
   let token: string | undefined;
   do {
     const res = await s3.send(
       new ListObjectsV2Command({ Bucket: env.MINIO_BUCKET, Prefix: prefix, ContinuationToken: token }),
     );
     for (const item of res.Contents ?? []) {
-      if (item.Key) keys.push(item.Key);
+      if (item.Key) objects.push({ key: item.Key, lastModified: item.LastModified ?? null });
     }
     token = res.IsTruncated ? res.NextContinuationToken : undefined;
   } while (token);
-  return keys;
+  return objects;
 }
 
 export async function deleteObjectKeys(keys: string[]): Promise<number> {
