@@ -1,11 +1,5 @@
 import type { QueueItem, PlaybackStateView } from "@karaoke/shared";
-
-function formatTime(totalSeconds: number) {
-  const s = Math.floor(Math.max(0, totalSeconds));
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${sec.toString().padStart(2, "0")}`;
-}
+import { formatDuration } from "@/lib/formatDuration";
 
 interface NowPlayingProps {
   current: QueueItem | null;
@@ -29,16 +23,16 @@ export function NowPlaying({ current, playbackState, hasReadyUpcoming = false }:
 
   return (
     <>
-      <h2 className="text-2xl font-semibold leading-tight mt-1">
+      <h2 dir="auto" className="text-2xl font-semibold leading-tight mt-1 text-start">
         {current.song.title}
       </h2>
       <p className="text-neutral-400 text-sm mt-1">
-        {current.song.artist} · requested by {current.requestedByUserName}
+        <bdi>{current.song.artist}</bdi> · requested by <bdi>{current.requestedByUserName}</bdi>
       </p>
       {duration > 0 && (
         <div className="mt-4 flex items-center gap-2 min-w-0">
           <span className="shrink-0 text-xs text-neutral-500 tabular-nums text-right">
-            {formatTime(displayPosition)}
+            {formatDuration(displayPosition)}
           </span>
           <div className="flex-1 min-w-0 h-1 rounded-full bg-neutral-800 overflow-hidden">
             <div
@@ -47,7 +41,7 @@ export function NowPlaying({ current, playbackState, hasReadyUpcoming = false }:
             />
           </div>
           <span className="shrink-0 text-xs text-neutral-500 tabular-nums">
-            {formatTime(duration)}
+            {formatDuration(duration)}
           </span>
         </div>
       )}
