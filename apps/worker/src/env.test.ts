@@ -38,6 +38,12 @@ describe("worker env", () => {
     for (const bad of ["0", "17", "1.5", "many"]) expect(() => parseEnv({ ...base, WORKER_CONCURRENCY: bad })).toThrow();
   });
 
+  it("enables Tab4U with polite defaults and lets it be switched off", () => {
+    const env = parseEnv({ ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x" });
+    expect(env).toMatchObject({ LYRICS_TAB4U_ENABLED: true, TAB4U_MIN_INTERVAL_MS: 2_000, TAB4U_TIMEOUT_MS: 8_000 });
+    expect(parseEnv({ ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x", LYRICS_TAB4U_ENABLED: "false" }).LYRICS_TAB4U_ENABLED).toBe(false);
+  });
+
   it("keeps transcription off unless asked for", () => {
     const env = parseEnv({ ...DB, STORAGE_DRIVER: "fs", STORAGE_DIR: "x" });
     expect(env.TRANSCRIBE_BACKEND).toBe("none");

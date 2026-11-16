@@ -1,8 +1,9 @@
-// Lyrics lookup: LRCLIB exact match, then LRCLIB search, then lyrics.ovh, within one bounded run.
+// Lyrics lookup: LRCLIB exact match, then LRCLIB search, then Tab4U for Hebrew songs, then lyrics.ovh, within one bounded run.
 import { env } from "../env.js";
 import { buildLyricsCandidates, type LyricsCandidate, type LyricsQueryInput } from "./lyricsQuery.js";
+import { hasHebrew, lookupTab4u } from "./tab4u.js";
 
-export type LyricsSource = "lrclib" | "lrclib_plain" | "ovh" | "whisper" | "aligned" | "manual" | "none";
+export type LyricsSource = "lrclib" | "lrclib_plain" | "tab4u" | "ovh" | "whisper" | "aligned" | "manual" | "none";
 export type LyricsMissReason =
   | "no_candidates"
   | "not_found"
@@ -143,6 +144,9 @@ async function lookupLyrics(params: LyricsLookupParams, run: LookupRun): Promise
   }
   if (plainFallback) return logHit(run, plainFallback, "lrclib_plain");
 
+  const tab4u = await lookupTab4uStage(candidates, params, run);
+  if (tab4u) return tab4u;
+
   const ovh = await lookupOvh(candidates[0], run);
   if (ovh) return ovh;
 
@@ -218,6 +222,25 @@ async function lookupOvh(candidate: LyricsCandidate, run: LookupRun): Promise<Ly
   }
   if ("detail" in outcome) run.log(`lyrics ${outcome.kind} for ${query}: ${outcome.detail}`);
   return null;
+}
+
+export function tab4uApplies(params: LyricsQueryInput): boolean {
+  return env.LYRICS_TAB4U_ENABLED === true && (hasHebrew(params.title) || hasHebrew(params.track));
+}
+
+async function lookupTab4uStage(
+  candidates: LyricsCandidate[],
+  params: LyricsLookupParams,
+  run: LookupRun,
+): Promise<LyricsResult | null> {
+  if (!tab4uApplies(params)) return null;
+  const found = await lookupTab4u(candidates, run.deadlineAt, run.log);
+  if (found.kind === "miss") {
+    if (found.failure) run.failures.add(found.failure);
+    return null;
+  }
+  run.log(`lyrics hit (plain only) via ${found.query}`);
+  return { ...miss(null), plainLyrics: found.lyrics, source: "tab4u", matchedQuery: found.query };
 }
 
 function trustedArtists(candidates: LyricsCandidate[], params: LyricsLookupParams): string[] {
