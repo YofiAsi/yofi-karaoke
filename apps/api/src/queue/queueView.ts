@@ -25,6 +25,7 @@ function toSongView(song: Song): QueueItemView["song"] {
     thumbnailUrl: song.thumbnailUrl,
     hasInstrumental: !!song.instrumentalObjectKey,
     hasLyrics: !!(song.lyricsLrc || song.lyricsPlain),
+    hasVocals: !!song.vocalsObjectKey,
   };
 }
 

@@ -137,6 +137,7 @@ export async function registerLibraryRoutes(app: FastifyInstance): Promise<void>
         thumbnailUrl: s.thumbnailUrl,
         hasInstrumental: true,
         hasLyrics: !!(s.lyricsLrc || s.lyricsPlain),
+        hasVocals: !!s.vocalsObjectKey,
       }));
 
       return reply.send({ items, total });
