@@ -126,7 +126,7 @@ To wipe the songs and the database but keep the tools, stop party mode and delet
 
 Measured on the RTX 5090 with 3.5 minute songs: about 31 to 36 s per song from start to ready, of which separation is about 21 s and the rest is the YouTube download and the lyrics lookup. Songs are processed one at a time, so a second song queued at the same moment is ready about a minute later. The very first song after setup takes about 80 s longer because the model is downloaded and the GPU kernels are compiled once.
 
-Songs without synced LRCLIB lyrics take 4 to 13 s longer for transcription (measured on five songs of 2.7 to 5.7 minutes, about 2.7 GB of VRAM while it runs); songs with synced lyrics take no extra time. Whisper lines are good for English and usable for Hebrew; alignment of plain lyrics is the more reliable path. `apps/worker/src/scripts/timedLyricsCheck.ts` compares both against LRCLIB synced lyrics for a transcript.
+Songs without synced LRCLIB lyrics take 4 to 11 s longer for transcription (measured on five songs of 2.7 to 5.7 minutes, about 2.7 GB of VRAM while it runs); songs with synced lyrics take no extra time. Whisper lines are good for English and usable for Hebrew; alignment of plain lyrics is the more reliable path. `apps/worker/src/scripts/timedLyricsCheck.ts` compares both against LRCLIB synced lyrics for a transcript.
 
 ## Deployment (Dokploy)
 
