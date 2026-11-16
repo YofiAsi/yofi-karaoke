@@ -101,8 +101,8 @@ export function searchQueries(candidates: LyricsCandidate[]): string[] {
 
 function hebrewQuery(candidate: LyricsCandidate): string {
   const text = candidate.kind === "title" ? candidate.track : `${candidate.artist} ${candidate.track}`;
-  const hebrewWords = text.split(/s+/).filter(hasHebrew);
-  return [...new Set(hebrewWords)].join(" ");
+  const searchable = text.split(/\s+/).filter((word) => hasHebrew(word) || /^\d+$/.test(word));
+  return [...new Set(searchable)].join(" ");
 }
 
 function searchUrl(query: string): URL {

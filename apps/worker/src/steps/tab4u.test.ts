@@ -144,6 +144,14 @@ describe("searchQueries", () => {
     ];
     expect(searchQueries(many)).toEqual(["זמר שיר שני", "זמרת שיר שלישי"]);
   });
+
+  it("drops Latin words and symbols but keeps numbers", () => {
+    expect(searchQueries([{ track: "טיפת מזל ♫", artist: "זהבה בן", kind: "split" }])).toEqual(["זהבה בן טיפת מזל"]);
+    expect(searchQueries([{ track: "אייל גולן יפה שלי Eyal Golan", artist: "EyalGolanOfficial", kind: "title" }])).toEqual([
+      "אייל גולן יפה שלי",
+    ]);
+    expect(searchQueries([{ track: "בן 32", artist: "עומר אדם", kind: "split" }])).toEqual(["עומר אדם בן 32"]);
+  });
 });
 
 describe("lookupTab4u", () => {
