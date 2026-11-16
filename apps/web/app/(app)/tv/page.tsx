@@ -106,7 +106,7 @@ export default function TvPage() {
       <aside className="w-[clamp(15rem,24vw,26rem)] shrink-0 border-s border-neutral-800 bg-neutral-950 flex flex-col gap-8 p-[clamp(1.25rem,2vw,2.5rem)]">
         <UpNextList items={upNext(upcoming, UP_NEXT_COUNT)} />
         <div className="mt-auto flex flex-col gap-6">
-          <LyricsDisplaySwitch selectedId={display.id} onChoose={choose} className="self-start opacity-60 hover:opacity-100 focus-within:opacity-100" />
+          <LyricsDisplaySwitch selectedId={display.id} onChoose={choose} size="tv" className="self-start opacity-60 hover:opacity-100 focus-within:opacity-100" />
           <JoinQrCode />
         </div>
       </aside>

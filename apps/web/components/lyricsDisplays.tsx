@@ -15,6 +15,7 @@ import {
 } from "@/lib/lyricsDisplayPreference";
 import { AutoLyricsLabel, LyricsView } from "./LyricsView";
 import { KaraokeView } from "./KaraokeView";
+import { hasSungLines } from "@/lib/karaokeLines";
 
 export interface LyricsDisplayProps {
   loading: boolean;
@@ -62,7 +63,7 @@ function ScrollingLyrics(props: LyricsDisplayProps) {
 }
 
 function KaraokeLyrics(props: LyricsDisplayProps) {
-  if (props.loading || props.lines.length === 0) return <ScrollingLyrics {...props} />;
+  if (props.loading || !hasSungLines(props.lines)) return <ScrollingLyrics {...props} lines={[]} />;
   return (
     <div className={`flex-1 min-h-0 flex flex-col ${props.surface === "tv" ? TV_LABEL_TEXT : ""}`}>
       {isAutomaticLyrics(props.source) && <AutoLyricsLabel />}
@@ -89,12 +90,15 @@ const DISPLAY_IDS = LYRICS_DISPLAYS.map((display) => display.id);
 
 export const DEFAULT_DISPLAY: Record<DisplaySurface, string> = { home: "scroll", tv: "karaoke" };
 
+export const PENDING_DISPLAY: LyricsDisplay = { id: "pending", label: "", Component: LoadingLyrics };
+
 export function findLyricsDisplay(id: string): LyricsDisplay {
+  if (id === PENDING_DISPLAY.id) return PENDING_DISPLAY;
   return LYRICS_DISPLAYS.find((display) => display.id === id) ?? LYRICS_DISPLAYS[0];
 }
 
 export function useLyricsDisplay(surface: DisplaySurface) {
-  const [id, setId] = useState(DEFAULT_DISPLAY[surface]);
+  const [id, setId] = useState(PENDING_DISPLAY.id);
 
   useEffect(() => {
     setId(loadDisplayPreference(browserStorage(), surface, DISPLAY_IDS, DEFAULT_DISPLAY[surface]));
@@ -111,13 +115,20 @@ export function useLyricsDisplay(surface: DisplaySurface) {
   return { display: findLyricsDisplay(id), choose };
 }
 
+const SWITCH_BUTTON_SIZE = {
+  phone: "min-h-11 px-4 text-sm",
+  tv: "min-h-8 px-3 py-1.5 text-xs",
+};
+
 export function LyricsDisplaySwitch({
   selectedId,
   onChoose,
+  size = "phone",
   className = "",
 }: {
   selectedId: string;
   onChoose: (id: string) => void;
+  size?: keyof typeof SWITCH_BUTTON_SIZE;
   className?: string;
 }) {
   return (
@@ -130,7 +141,7 @@ export function LyricsDisplaySwitch({
             type="button"
             aria-pressed={selected}
             onClick={() => onChoose(display.id)}
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold min-h-8 ${
+            className={`rounded-full font-semibold ${SWITCH_BUTTON_SIZE[size]} ${
               selected ? "bg-white text-black" : "text-neutral-400"
             }`}
           >

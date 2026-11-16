@@ -75,3 +75,25 @@ describe("countdownDots", () => {
     expect(countdownDots(LINES, 50)).toBeNull();
   });
 });
+
+describe("lines that start together", () => {
+  const DUET = [line(10, 13), line(10, 12.5), line(15, 17), line(18, 20)];
+
+  function duetShown(time: number) {
+    return slotContents(DUET, time).map((slot) => (slot ? `${slot.lineIndex}:${slot.role}` : null));
+  }
+
+  it("shows both lines of a shared start as current", () => {
+    expect(duetShown(10.5)).toEqual(["0:current", "1:current"]);
+    expect(duetShown(12.8)).toEqual(["0:current", "1:current"]);
+  });
+
+  it("moves on line by line once each one is finished", () => {
+    expect(duetShown(13.2)).toEqual(["2:next", "1:current"]);
+    expect(duetShown(15.5)).toEqual(["2:current", "3:next"]);
+  });
+
+  it("shows the pair before it starts", () => {
+    expect(duetShown(5)).toEqual(["0:current", "1:current"]);
+  });
+});
