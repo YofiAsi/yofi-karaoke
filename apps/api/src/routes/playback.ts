@@ -111,7 +111,7 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
       await requirePlayer(req);
       const { queueItemId, positionSeconds } = req.body as PositionBody;
       if (await recordPosition(queueItemId, positionSeconds)) {
-        const tick: PlaybackTickEvent = { queueItemId, positionSeconds };
+        const tick: PlaybackTickEvent = { queueItemId, positionSeconds, serverTimeMs: Date.now() };
         getIO().emit(SocketEvents.playbackTick, tick);
       }
       return reply.code(204).send();

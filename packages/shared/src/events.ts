@@ -35,6 +35,7 @@ export interface PlaybackStateEvent extends PlaybackStateView {}
 export interface PlaybackTickEvent {
   queueItemId: string;
   positionSeconds: number;
+  serverTimeMs: number;
 }
 
 export interface HostChangedEvent {
