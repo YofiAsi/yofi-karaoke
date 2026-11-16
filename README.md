@@ -60,7 +60,7 @@ Production uses **[`docker-compose.yml`](docker-compose.yml)** only (Intel/OpenV
 
 1. Add the compose project in Dokploy (same `docker-compose.yml`).
 2. Set **build arguments** for the `web` image if you change public URLs: `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WS_URL` (defaults are in the compose `build.args`; see `.env.example` comments). Rebuild the web image after changing `NEXT_PUBLIC_*`.
-3. Set runtime environment variables in Dokploy (from `.env.example`). `HOST_PIN` and `SESSION_SECRET` are required by the api. `CORS_ORIGIN` is optional and is forwarded only when set. Optional container tuning: `YTDLP_AUTO_UPDATE` (default `true`) and `YTDLP_UPDATE_TIMEOUT_SECONDS` (default `120`), see [Containers](#containers).
+3. Set runtime environment variables in Dokploy (from `.env.example`). `HOST_PIN` and `SESSION_SECRET` are required by the api. `CORS_ORIGIN` is optional and is forwarded only when set. Optional container tuning: `YTDLP_AUTO_UPDATE` (default `true`) and `YTDLP_UPDATE_TIMEOUT_SECONDS` (default `45`), see [Containers](#containers).
 4. **Routing Socket.IO:** the browser connects with path `/socket.io`. Next.js rewrites do **not** proxy WebSocket upgrades, so the edge proxy must forward **`/socket.io`** (and typically **`/api`**) on your public hostname to the **`api`** service (`:4000` inside the stack). Forward **`/`** to **`web`** (`:3000`). Example host: `yofikaraoke.asafshilo.com` — TLS is terminated by Dokploy, not by this repository.
 5. Deploy. Services are not published on the host; only Dokploy’s routing reaches them.
 
@@ -68,7 +68,7 @@ See [`docs/phase-4-dokploy-smoke.md`](docs/phase-4-dokploy-smoke.md) for a post-
 
 ### Containers
 
-- **yt-dlp freshness:** the api and worker entrypoint upgrades `yt-dlp[default]` in `/opt/venv` on every container start, then logs the yt-dlp and Deno versions. A failed or slow upgrade (over `YTDLP_UPDATE_TIMEOUT_SECONDS`) only logs a warning and the container starts with the version already installed. Set `YTDLP_AUTO_UPDATE=false` to skip it. Restarting the api and worker is enough to pick up a new yt-dlp release; no rebuild is needed.
+- **yt-dlp freshness:** on every container start the api and worker entrypoint downloads the latest `yt-dlp[default]` into a temp dir, installs it offline into `/opt/venv`, then logs the yt-dlp and Deno versions. Only the download runs under `YTDLP_UPDATE_TIMEOUT_SECONDS`, so a failed or slow download only logs a warning and never removes the version already installed. Set `YTDLP_AUTO_UPDATE=false` to skip it. Restarting the api and worker is enough to pick up a new yt-dlp release; no rebuild is needed.
 - **Deno** is installed in the api and worker images because current yt-dlp needs a JavaScript runtime for YouTube.
 - **Python:** the worker images run Python 3.11 from `/opt/venv`; `PYTHON_BIN` is set to `/opt/venv/bin/python` in the image.
 - **Volumes:** besides Postgres and MinIO data, the worker keeps the separation model (`/app/models`) and its scratch dir (`/tmp/karaoke`) on named volumes, so the model is downloaded once instead of on every deploy.
@@ -77,7 +77,7 @@ See [`docs/phase-4-dokploy-smoke.md`](docs/phase-4-dokploy-smoke.md) for a post-
 
 ## CI
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pushes to `main` and on pull requests: frozen lockfile install, `packages/shared` build, Prisma client generation, `tsc --noEmit` for api, web and worker, and the vitest suites of api and web. The worker has no tests yet.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pushes to `main` and on pull requests: frozen lockfile install, `packages/shared` build, Prisma client generation, `tsc --noEmit` for api, web and worker, and the vitest suites of api, web and worker.
 
 ## Architecture
 
