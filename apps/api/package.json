@@ -11,7 +11,7 @@
     "lint": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "sh -c 'if [ -f ../../.env ]; then set -a && . ../../.env && set +a; fi && exec prisma migrate deploy'",
-    "test": "vitest run",
+    "test": "vitest run --dir src",
     "purge:objects": "tsx --env-file-if-exists=../../.env src/scripts/purgeObjects.ts"
   },
   "dependencies": {
