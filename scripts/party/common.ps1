@@ -33,6 +33,7 @@ function Get-PartyPaths([string]$DataDir, [string]$ToolsDir) {
         YtDlp      = Join-Path $ToolsDir "venv\Scripts\yt-dlp.exe"
         Models     = Join-Path $ToolsDir "models"
         PgSql      = Join-Path $ToolsDir "pgsql"
+        PgBinFile  = Join-Path $ToolsDir "postgres-bin.txt"
         Stems      = Join-Path $DataDir "stems"
         Tmp        = Join-Path $DataDir "tmp"
         PgData     = Join-Path $DataDir "postgres"
@@ -81,8 +82,13 @@ function Test-PostgresServerBin([string]$Bin) {
     return $hasTools -and (Test-Path (Join-Path $Bin "..\share\postgres.bki"))
 }
 
+function Read-RecordedPostgresBin($Paths) {
+    if (-not (Test-Path $Paths.PgBinFile)) { return @() }
+    return @((Get-Content $Paths.PgBinFile -Raw).Trim())
+}
+
 function Get-PostgresBinCandidates($Paths) {
-    $candidates = @(Join-Path $Paths.PgSql "bin")
+    $candidates = @(Read-RecordedPostgresBin $Paths) + @(Join-Path $Paths.PgSql "bin")
     $initdb = Find-Command "initdb"
     if ($initdb) { $candidates += Split-Path $initdb }
     $installed = Get-ChildItem "C:\Program Files\PostgreSQL\*\bin\initdb.exe" -ErrorAction SilentlyContinue |

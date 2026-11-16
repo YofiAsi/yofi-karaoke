@@ -1,7 +1,9 @@
 # Installs the GPU Python environment for party mode into the data directory.
 param(
     [string]$DataDir,
-    [string]$ToolsDir
+    [string]$ToolsDir,
+    [string]$PostgresBin,
+    [switch]$DownloadPostgres
 )
 
 . (Join-Path $PSScriptRoot "common.ps1")
@@ -45,8 +47,27 @@ function Install-Requirements([string]$Uv) {
     )
 }
 
+function Use-ProvidedPostgres([string]$Bin) {
+    $full = (Resolve-Path $Bin -ErrorAction SilentlyContinue).Path
+    if (-not (Test-PostgresServerBin $full)) {
+        Stop-WithError "$Bin is not a PostgreSQL server bin folder (initdb.exe, pg_ctl.exe and ..\share\postgres.bki are required)"
+    }
+    Set-Content -Path $Paths.PgBinFile -Value $full -NoNewline -Encoding utf8
+    Write-Step "Using PostgreSQL server binaries from $full"
+}
+
+function Show-PostgresChoices {
+    Write-Host "PostgreSQL server binaries were not found (an install with only the command line tools is not enough)." -ForegroundColor Yellow
+    Write-Host "Pick one and rerun setup:"
+    Write-Host "  scripts\party\setup.ps1 -PostgresBin <folder with initdb.exe>"
+    Write-Host "  scripts\party\setup.ps1 -DownloadPostgres   (official EDB zip, about 325 MB, into $($Paths.PgSql))"
+}
+
 function Install-PostgresServer {
-    if (Find-PostgresBin $Paths) { return }
+    if ($PostgresBin) { Use-ProvidedPostgres $PostgresBin; return }
+    $found = Find-PostgresBin $Paths
+    if ($found) { Write-Step "PostgreSQL server binaries: $found"; return }
+    if (-not $DownloadPostgres) { Show-PostgresChoices; return }
     Write-Step "Downloading PostgreSQL server binaries into $($Paths.PgSql) (about 325 MB)"
     $zip = Join-Path $Paths.Tools "postgresql-binaries.zip"
     $staging = Join-Path $Paths.Tools "pgsql-staging"
@@ -73,4 +94,5 @@ New-Venv $uv
 Install-Requirements $uv
 Test-GpuProvider
 Install-PostgresServer
+if (-not (Find-PostgresBin $Paths)) { Stop-WithError "Python setup is done, PostgreSQL is still missing (see above)" }
 Write-Step "Setup complete. Data directory: $($Paths.Data)"

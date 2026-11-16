@@ -2,6 +2,7 @@
 param(
     [string]$DataDir,
     [string]$ToolsDir,
+    [string]$PostgresBin,
     [switch]$Tunnel,
     [int]$WebPort = 3000,
     [int]$ApiPort = 4100,
@@ -20,13 +21,19 @@ $WebUrl = "http://127.0.0.1:$WebPort"
 $script:Children = New-Object System.Collections.ArrayList
 $script:PgBin = $null
 
+function Resolve-PostgresBin {
+    if (-not $PostgresBin) { return (Find-PostgresBin $Paths) }
+    if (Test-PostgresServerBin $PostgresBin) { return (Resolve-Path $PostgresBin).Path }
+    return $null
+}
+
 function Assert-Prerequisites {
     Write-Step "Checking prerequisites"
     $problems = New-Object System.Collections.ArrayList
     if (-not (Find-Command "node")) { [void]$problems.Add("Node.js is not on PATH. Install Node 20 or newer.") }
     if (-not (Find-Command "corepack")) { [void]$problems.Add("corepack is not on PATH. It ships with Node.js.") }
     if (-not (Find-Command "ffmpeg")) { [void]$problems.Add("ffmpeg is not on PATH. Install it, for example with: winget install Gyan.FFmpeg.Essentials") }
-    $script:PgBin = Find-PostgresBin $Paths
+    $script:PgBin = Resolve-PostgresBin
     if (-not $script:PgBin) { [void]$problems.Add("PostgreSQL server binaries were not found. Run scripts\party\setup.ps1, which downloads them into $($Paths.PgSql).") }
     if (-not (Test-Path $Paths.VenvPython)) { [void]$problems.Add("The GPU Python environment is missing in $($Paths.Venv). Run scripts\party\setup.ps1 first.") }
     if (-not (Test-Path $Paths.YtDlp)) { [void]$problems.Add("yt-dlp is missing from $($Paths.VenvBin). Run scripts\party\setup.ps1 again.") }
