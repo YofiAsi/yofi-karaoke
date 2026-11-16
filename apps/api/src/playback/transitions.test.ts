@@ -77,7 +77,7 @@ const { db, resetDb } = vi.hoisted(() => {
   };
 
   function resetDb(currentQueueItemId: string | null, items: Row[]): void {
-    tables.playback = { id: 1, currentQueueItemId, positionSeconds: 42, isPlaying: true };
+    tables.playback = { id: 1, currentQueueItemId, positionSeconds: 42, isPlaying: true, vocalsGain: 0.7 };
     tables.items = items.map((i, index) => ({
       createdAt: new Date(index),
       playedAt: null,
@@ -243,5 +243,47 @@ describe("recordPosition", () => {
     await advance(A);
     expect(await recordPosition(A, 180)).toBe(false);
     expect(db.tables.playback.positionSeconds).toBe(0);
+  });
+});
+
+describe("vocals gain reset", () => {
+  it("mutes vocals when advance promotes the next song", async () => {
+    resetDb(A, [
+      { id: A, state: "ready", position: 1 },
+      { id: B, state: "ready", position: 2 },
+    ]);
+    await advance(A);
+    expect(db.tables.playback.vocalsGain).toBe(0);
+  });
+
+  it("mutes vocals when rewind restores the previous song", async () => {
+    resetDb(B, [
+      { id: A, state: "played", position: 1, playedAt: new Date(1000) },
+      { id: B, state: "ready", position: 2 },
+    ]);
+    await rewind(B);
+    expect(db.tables.playback.vocalsGain).toBe(0);
+  });
+
+  it("mutes vocals when play promotes the first ready song", async () => {
+    resetDb(null, [{ id: A, state: "ready", position: 1 }]);
+    await play();
+    expect(db.tables.playback.vocalsGain).toBe(0);
+  });
+
+  it("keeps the gain when play only resumes the current song", async () => {
+    resetDb(A, [{ id: A, state: "ready", position: 1 }]);
+    db.tables.playback.isPlaying = false;
+    await play();
+    expect(db.tables.playback.vocalsGain).toBe(0.7);
+  });
+
+  it("keeps the gain for a stale transition", async () => {
+    resetDb(A, [
+      { id: A, state: "ready", position: 1 },
+      { id: B, state: "ready", position: 2 },
+    ]);
+    await advance(B);
+    expect(db.tables.playback.vocalsGain).toBe(0.7);
   });
 });
