@@ -1,6 +1,6 @@
 /* Streams a stored audio object with single byte range support, ETag and immutable caching. */
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { getObjectStream, isMissingObjectError, statObject, type ObjectInfo } from "../minio.js";
+import { storage, type ObjectInfo } from "../storage/index.js";
 
 const RANGE_RE = /^bytes=(\d*)-(\d*)$/;
 const CACHE_CONTROL = "public, max-age=31536000, immutable";
@@ -41,21 +41,12 @@ function setCommonHeaders(reply: FastifyReply, info: ObjectInfo): void {
   if (info.etag) reply.header("ETag", info.etag);
 }
 
-async function openStream(key: string, range?: { start: number; end: number }) {
-  try {
-    return (await getObjectStream(key, range)).body;
-  } catch (err) {
-    if (isMissingObjectError(err)) return null;
-    throw err;
-  }
-}
-
 export async function streamAudioObject(
   req: FastifyRequest,
   reply: FastifyReply,
   key: string,
 ): Promise<FastifyReply> {
-  const info = await statObject(key);
+  const info = await storage.statObject(key);
   if (!info) return sendMissing(reply);
 
   const total = info.contentLength;
@@ -66,7 +57,7 @@ export async function streamAudioObject(
   }
 
   const partial = range.kind === "partial" ? { start: range.start, end: range.end } : undefined;
-  const body = await openStream(key, partial);
+  const body = await storage.openObjectStream(key, partial);
   if (!body) return sendMissing(reply);
 
   setCommonHeaders(reply, info);

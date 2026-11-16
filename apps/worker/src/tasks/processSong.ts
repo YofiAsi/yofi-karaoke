@@ -6,7 +6,7 @@ import { env } from "../env.js";
 import { downloadYouTubeAudio } from "../steps/download.js";
 import { separateVocals } from "../steps/separate.js";
 import { fetchLyrics } from "../steps/lyrics.js";
-import { uploadStem } from "../minioUpload.js";
+import { uploadStem } from "../storage/index.js";
 import { markSongFailed, markSongReady } from "../queueState.js";
 import { decideFailure, type FailureDecision } from "./failurePolicy.js";
 import { saveLyrics } from "./refetchLyrics.js";

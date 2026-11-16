@@ -1,5 +1,5 @@
 /* Chooses which stored stems the purge script may delete: unreferenced by any Song and older than a grace period. */
-import type { StoredObject } from "../minio.js";
+import type { StoredObject } from "../storage/index.js";
 
 export const PURGE_MIN_AGE_MS = 60 * 60_000;
 

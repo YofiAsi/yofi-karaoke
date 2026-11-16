@@ -78,13 +78,11 @@ def probe_openvino() -> None:
 
 def probe_cuda() -> None:
     try:
-        import onnxruntime as ort
+        from cuda_probe import assert_cuda_session
 
-        providers = ort.get_available_providers()
-        if "CUDAExecutionProvider" not in providers:
-            fail(f"onnxruntime reports no CUDA provider. available={providers}")
+        print(f"separate.py {assert_cuda_session()}", file=sys.stderr)
     except Exception as exc:
-        fail(f"failed to probe CUDA provider: {exc}")
+        fail(f"CUDA provider unavailable: {exc}")
 
 
 def build_separator(output_dir: str, model_dir: str, bitrate: str):

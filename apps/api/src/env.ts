@@ -10,9 +10,11 @@ const RawEnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
   PORT: z.coerce.number().int().positive().default(4000),
   HOST: z.string().default("0.0.0.0"),
+  STORAGE_DRIVER: z.enum(["minio", "fs"]).default("minio"),
+  STORAGE_DIR: z.string().min(1).optional(),
   MINIO_ENDPOINT: z.string().default("minio:9000"),
-  MINIO_ACCESS_KEY: z.string(),
-  MINIO_SECRET_KEY: z.string(),
+  MINIO_ACCESS_KEY: z.string().optional(),
+  MINIO_SECRET_KEY: z.string().optional(),
   MINIO_BUCKET: z.string().default("karaoke"),
   MINIO_REGION: z.string().default("us-east-1"),
   MINIO_USE_SSL: z
@@ -40,6 +42,22 @@ function isWeakProductionSecret(raw: RawEnv): boolean {
 
 function allowsAnyOrigin(raw: RawEnv): boolean {
   return parseOriginList(raw.CORS_ORIGIN ?? "").includes(ANY_ORIGIN);
+}
+
+function missingStorageSettings(raw: RawEnv): string[] {
+  if (raw.STORAGE_DRIVER === "fs") return raw.STORAGE_DIR ? [] : ["STORAGE_DIR"];
+  const required = ["MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"] as const;
+  return required.filter((name) => !raw[name]);
+}
+
+function requireStorageSettings(raw: RawEnv, ctx: z.RefinementCtx): void {
+  for (const name of missingStorageSettings(raw)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [name],
+      message: `${name} is required when STORAGE_DRIVER=${raw.STORAGE_DRIVER}`,
+    });
+  }
 }
 
 function enforceProductionRules(raw: RawEnv, ctx: z.RefinementCtx): void {
@@ -72,7 +90,9 @@ function applyDefaults(raw: RawEnv) {
   };
 }
 
-const EnvSchema = RawEnvSchema.superRefine(enforceProductionRules).transform(applyDefaults);
+const EnvSchema = RawEnvSchema.superRefine(requireStorageSettings)
+  .superRefine(enforceProductionRules)
+  .transform(applyDefaults);
 
 export function parseEnv(source: Record<string, string | undefined>) {
   return EnvSchema.parse(source);

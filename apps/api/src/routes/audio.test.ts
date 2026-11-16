@@ -10,10 +10,8 @@ const { mockFindUnique, mockStat, mockGet } = vi.hoisted(() => ({
 }));
 
 vi.mock("../db.js", () => ({ prisma: { song: { findUnique: mockFindUnique } } }));
-vi.mock("../minio.js", () => ({
-  statObject: mockStat,
-  getObjectStream: mockGet,
-  isMissingObjectError: (err: { name?: string }) => err?.name === "NoSuchKey",
+vi.mock("../storage/index.js", () => ({
+  storage: { statObject: mockStat, openObjectStream: mockGet },
 }));
 
 import { registerAudioRoutes } from "./audio.js";
@@ -56,9 +54,9 @@ async function buildApp() {
 
 function serveBytes() {
   mockStat.mockResolvedValue({ contentLength: BYTES.length, contentType: "audio/mpeg", etag: '"abc"' });
-  mockGet.mockImplementation(async (_key: string, range?: { start: number; end: number }) => ({
-    body: Readable.from([range ? BYTES.subarray(range.start, range.end + 1) : BYTES]),
-  }));
+  mockGet.mockImplementation(async (_key: string, range?: { start: number; end: number }) =>
+    Readable.from([range ? BYTES.subarray(range.start, range.end + 1) : BYTES]),
+  );
 }
 
 describe("audio routes", () => {
@@ -122,7 +120,7 @@ describe("audio routes", () => {
   });
 
   it("maps an object deleted between stat and get to 404", async () => {
-    mockGet.mockRejectedValue(Object.assign(new Error("gone"), { name: "NoSuchKey" }));
+    mockGet.mockResolvedValue(null);
     const app = await buildApp();
     const res = await app.inject({ url: `/api/audio/${SONG_ID}` });
     expect(res.statusCode).toBe(404);
