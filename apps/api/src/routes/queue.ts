@@ -1,245 +1,77 @@
 import type { FastifyInstance } from "fastify";
-import { z } from "zod";
-import { QueueState } from "@prisma/client";
 import {
   AddQueueBodySchema,
-  type ProcessingStep,
-  type QueueItem as QueueItemView,
-  type QueueView,
-  PgNotifyChannels,
+  MoveQueueItemBodySchema,
+  QueueItemParamsSchema,
+  type AddQueueBody,
+  type MoveQueueItemBody,
+  type QueueItemParams,
 } from "@karaoke/shared";
 import { prisma } from "../db.js";
 import { requireUser } from "../auth/userCookie.js";
-import { requireCurrentHost } from "../auth/requireCurrentHost.js";
-import { pickTrackMetadata, ytdlpInfo } from "../ytdlp.js";
-import { isYtVideoUnavailableMessage } from "../ytdlp/isVideoUnavailable.js";
-import { enqueueProcessSong } from "../jobs/enqueueProcessSong.js";
+import { notifyQueueUpdated } from "../playback/notify.js";
+import { findOrCreateSong, queueSong, reviveFailedItem, ensureProcessing } from "../queue/addition.js";
+import { httpError } from "../queue/httpError.js";
+import { loadActor, retryDenial } from "../queue/permissions.js";
+import { moveQueueItem, removeQueueItem } from "../queue/management.js";
+import { loadQueueView } from "../queue/queueView.js";
 
-export async function notify(channel: string, payload: object): Promise<void> {
-  await prisma.$executeRawUnsafe(
-    `SELECT pg_notify($1, $2)`,
-    channel,
-    JSON.stringify(payload),
-  );
-}
-
-export async function nextPosition(): Promise<number> {
-  const agg = await prisma.queueItem.aggregate({ _max: { position: true } });
-  return (agg._max.position ?? 0) + 1;
-}
-
-async function queueView(): Promise<QueueView> {
-  const items = await prisma.queueItem.findMany({
-    where: {
-      state: {
-        in: [
-          QueueState.queued,
-          QueueState.processing,
-          QueueState.ready,
-          QueueState.failed,
-        ],
-      },
-    },
-    orderBy: { position: "asc" },
-    include: {
-      song: true,
-      requestedByUser: true,
-    },
-  });
-
-  const songIds = items.map((i) => i.songId);
-  const jobs = songIds.length
-    ? await prisma.processingJob.findMany({
-        where: { songId: { in: songIds } },
-        orderBy: { startedAt: "desc" },
-      })
-    : [];
-  const jobBySong = new Map<string, (typeof jobs)[number]>();
-  for (const j of jobs) {
-    if (!jobBySong.has(j.songId)) jobBySong.set(j.songId, j);
-  }
-
-  const current = items.find((i) => i.state === QueueState.ready) ?? null;
-  const currentId = current?.id ?? null;
-
-  const toView = (i: (typeof items)[number]): QueueItemView => {
-    const job = jobBySong.get(i.songId);
-    return {
-      id: i.id,
-      song: {
-        id: i.song.id,
-        youtubeVideoId: i.song.youtubeVideoId,
-        title: i.song.title,
-        artist: i.song.artist,
-        channel: i.song.channel,
-        durationSeconds: i.song.durationSeconds,
-        thumbnailUrl: i.song.thumbnailUrl,
-        hasInstrumental: !!i.song.instrumentalObjectKey,
-        hasLyrics: !!(i.song.lyricsLrc || i.song.lyricsPlain),
-      },
-      requestedByUserId: i.requestedByUserId,
-      requestedByUserName: i.requestedByUser.name,
-      position: i.position,
-      state: i.state as QueueItemView["state"],
-      progress: job
-        ? {
-            step: job.step as ProcessingStep,
-            progressPct: job.progressPct,
-            errorMessage: job.errorMessage ?? null,
-          }
-        : null,
-    };
-  };
-
-  return {
-    current: current ? toView(current) : null,
-    upcoming: items.filter((i) => i.id !== currentId).map(toView),
-  };
+async function loadItemWithSong(queueItemId: string) {
+  const item = await prisma.queueItem.findUnique({ where: { id: queueItemId }, include: { song: true } });
+  if (!item) throw httpError(404, "not_found");
+  return item;
 }
 
 export async function registerQueueRoutes(app: FastifyInstance): Promise<void> {
+  app.get("/api/queue", async (_req, reply) => reply.send(await loadQueueView()));
+
   app.post("/api/queue", {
     schema: { body: AddQueueBodySchema },
     handler: async (req, reply) => {
       const user = await requireUser(req);
-      const { youtubeVideoId } = req.body as { youtubeVideoId: string };
-
-      let song = await prisma.song.findUnique({ where: { youtubeVideoId } });
-      let needsJob = false;
-
-      if (!song) {
-        let info;
-        try {
-          info = await ytdlpInfo(youtubeVideoId);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          if (isYtVideoUnavailableMessage(msg)) {
-            return reply.code(422).send({ error: "video_unavailable" });
-          }
-          throw e;
-        }
-        const duration = Math.round(info.duration ?? 0);
-        const thumb =
-          info.thumbnail ??
-          (info.thumbnails?.[info.thumbnails.length - 1]?.url ?? "");
-        song = await prisma.song.create({
-          data: {
-            youtubeVideoId,
-            title: info.title ?? youtubeVideoId,
-            artist: info.artist ?? info.uploader ?? info.channel ?? "Unknown",
-            channel: info.channel ?? info.uploader ?? "Unknown",
-            durationSeconds: duration,
-            thumbnailUrl: thumb,
-            ...pickTrackMetadata(info),
-          },
-        });
-        needsJob = true;
-      } else if (!song.instrumentalObjectKey) {
-        const hasOpenJob = await prisma.processingJob.findFirst({
-          where: { songId: song.id, step: { notIn: ["done", "error"] } },
-        });
-        needsJob = !hasOpenJob;
-      }
-
-      const activeItem = await prisma.queueItem.findFirst({
-        where: {
-          songId: song.id,
-          state: {
-            in: [
-              QueueState.queued,
-              QueueState.processing,
-              QueueState.ready,
-              QueueState.failed,
-            ],
-          },
-        },
-      });
-      if (activeItem) {
-        return reply.code(409).send({ error: "already_queued" });
-      }
-
-      const initialState: QueueState = song.instrumentalObjectKey
-        ? QueueState.ready
-        : QueueState.processing;
-
-      const position = await nextPosition();
-      const queueItem = await prisma.queueItem.create({
-        data: {
-          songId: song.id,
-          requestedByUserId: user.id,
-          position,
-          state: initialState,
-        },
-      });
-
-      if (needsJob) {
-        await prisma.processingJob.create({
-          data: { songId: song.id, step: "pending", progressPct: 0 },
-        });
-        await enqueueProcessSong(song.id);
-      }
-
-      await notify(PgNotifyChannels.queueUpdated, { reason: "add", queueItemId: queueItem.id });
-
-      return reply.code(201).send({
-        queueItemId: queueItem.id,
-        songId: song.id,
-        state: initialState,
-      });
+      const { youtubeVideoId } = req.body as AddQueueBody;
+      const song = await findOrCreateSong(youtubeVideoId);
+      const item = await queueSong(song, user.id);
+      await notifyQueueUpdated("add", { queueItemId: item.id });
+      return reply.code(201).send({ queueItemId: item.id, songId: song.id, state: item.state });
     },
   });
 
-  app.post(
-    "/api/queue/items/:queueItemId/retry",
-    {
-      schema: {
-        params: z.object({ queueItemId: z.string().uuid() }),
-      },
+  app.post("/api/queue/items/:queueItemId/retry", {
+    schema: { params: QueueItemParamsSchema },
+    handler: async (req, reply) => {
+      const actor = await loadActor(req);
+      const { queueItemId } = req.params as QueueItemParams;
+      const { song, ...item } = await loadItemWithSong(queueItemId);
+      const denial = retryDenial(actor, item);
+      if (denial) throw denial;
+      const revived = await reviveFailedItem(item, song);
+      await ensureProcessing(song);
+      await notifyQueueUpdated("retry", { queueItemId: item.id });
+      return reply.send({ ok: true, state: revived.state });
     },
-    async (req, reply) => {
-      await requireCurrentHost(req);
-      const { queueItemId } = req.params as { queueItemId: string };
-      const item = await prisma.queueItem.findUnique({
-        where: { id: queueItemId },
-        include: { song: true },
-      });
-      if (!item) return reply.code(404).send({ error: "not_found" });
-      if (item.state !== QueueState.failed) {
-        return reply.code(400).send({ error: "not_failed" });
-      }
-      if (item.song.instrumentalObjectKey) {
-        return reply.code(400).send({ error: "song_ready" });
-      }
-      const otherActive = await prisma.queueItem.findFirst({
-        where: {
-          songId: item.songId,
-          id: { not: item.id },
-          state: {
-            in: [QueueState.queued, QueueState.processing, QueueState.ready],
-          },
-        },
-      });
-      if (otherActive) {
-        return reply.code(409).send({ error: "song_active_elsewhere" });
-      }
-      await prisma.$transaction(async (tx) => {
-        await tx.queueItem.update({
-          where: { id: item.id },
-          data: { state: QueueState.processing },
-        });
-        await tx.processingJob.deleteMany({ where: { songId: item.songId } });
-        await tx.processingJob.create({
-          data: { songId: item.songId, step: "pending", progressPct: 0 },
-        });
-      });
-      await enqueueProcessSong(item.songId);
-      await notify(PgNotifyChannels.queueUpdated, { reason: "retry", queueItemId: item.id });
-      return reply.send({ ok: true });
-    },
-  );
+  });
 
-  app.get("/api/queue", async (_req, reply) => {
-    const view = await queueView();
-    return reply.send(view);
+  app.delete("/api/queue/items/:queueItemId", {
+    schema: { params: QueueItemParamsSchema },
+    handler: async (req, reply) => {
+      const actor = await loadActor(req);
+      const { queueItemId } = req.params as QueueItemParams;
+      await removeQueueItem(actor, queueItemId);
+      await notifyQueueUpdated("remove", { queueItemId });
+      return reply.code(204).send();
+    },
+  });
+
+  app.post("/api/queue/items/:queueItemId/move", {
+    schema: { params: QueueItemParamsSchema, body: MoveQueueItemBodySchema },
+    handler: async (req, reply) => {
+      const actor = await loadActor(req);
+      const { queueItemId } = req.params as QueueItemParams;
+      const { direction } = req.body as MoveQueueItemBody;
+      const moved = await moveQueueItem(actor, queueItemId, direction);
+      if (moved) await notifyQueueUpdated("move", { queueItemId });
+      return reply.send({ moved });
+    },
   });
 }

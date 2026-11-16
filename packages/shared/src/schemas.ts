@@ -105,3 +105,27 @@ export const PlaybackStateSchema = z.object({
   playerUserId: z.string().uuid().nullable(),
 });
 export type PlaybackStateView = z.infer<typeof PlaybackStateSchema>;
+
+export const QueueItemParamsSchema = z.object({
+  queueItemId: z.string().uuid(),
+});
+export type QueueItemParams = z.infer<typeof QueueItemParamsSchema>;
+
+export const MoveDirectionSchema = z.enum(["up", "down"]);
+export type MoveDirection = z.infer<typeof MoveDirectionSchema>;
+
+export const MoveQueueItemBodySchema = z.object({
+  direction: MoveDirectionSchema,
+});
+export type MoveQueueItemBody = z.infer<typeof MoveQueueItemBodySchema>;
+
+export const PlaybackTransitionBodySchema = z.object({
+  expectedQueueItemId: z.string().uuid().nullable(),
+});
+export type PlaybackTransitionBody = z.infer<typeof PlaybackTransitionBodySchema>;
+
+export const PlaybackTransitionResultSchema = z.object({
+  changed: z.boolean(),
+  currentQueueItemId: z.string().uuid().nullable(),
+});
+export type PlaybackTransitionResult = z.infer<typeof PlaybackTransitionResultSchema>;

@@ -1,35 +1,114 @@
 "use client";
 
 import { useState } from "react";
-import type { QueueItem, SongProgressEvent } from "@karaoke/shared";
+import type { MoveDirection, QueueItem, SongProgressEvent, User } from "@karaoke/shared";
 import { api } from "@/lib/api";
+import { canRemoveItem } from "@/lib/roles";
 import { ProcessingBadge } from "./ProcessingBadge";
 
 interface QueueListProps {
   items: QueueItem[];
   progress: Map<string, SongProgressEvent>;
-  canRetryAsHost: boolean;
+  currentUser: User;
+  isHost: boolean;
   onQueueChanged: () => Promise<void>;
 }
 
-export function QueueList({
-  items,
-  progress,
-  canRetryAsHost,
-  onQueueChanged,
-}: QueueListProps) {
-  const [retryingId, setRetryingId] = useState<string | null>(null);
+interface ItemActions {
+  busy: boolean;
+  canManage: boolean;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onRetry: () => void;
+  onRemove: () => void;
+  onMove: (direction: MoveDirection) => void;
+}
 
-  async function retry(queueItemId: string) {
-    setRetryingId(queueItemId);
+const SMALL_BUTTON =
+  "rounded-full border px-2.5 py-1 text-xs font-semibold disabled:opacity-40 min-w-8";
+
+function errorMessageOf(item: QueueItem, live: SongProgressEvent | null): string | null {
+  if (item.state !== "failed") return null;
+  return live?.errorMessage ?? item.progress?.errorMessage ?? null;
+}
+
+function QueueItemControls({ item, actions }: { item: QueueItem; actions: ItemActions }) {
+  const { busy, canManage, canMoveUp, canMoveDown } = actions;
+  return (
+    <div className="flex items-center gap-1.5">
+      {canMoveUp ? (
+        <button
+          type="button"
+          onClick={() => actions.onMove("up")}
+          disabled={busy}
+          aria-label={`Move ${item.song.title} up`}
+          className={`${SMALL_BUTTON} border-neutral-700 text-neutral-300`}
+        >
+          ↑
+        </button>
+      ) : null}
+      {canMoveDown ? (
+        <button
+          type="button"
+          onClick={() => actions.onMove("down")}
+          disabled={busy}
+          aria-label={`Move ${item.song.title} down`}
+          className={`${SMALL_BUTTON} border-neutral-700 text-neutral-300`}
+        >
+          ↓
+        </button>
+      ) : null}
+      {canManage && item.state === "failed" ? (
+        <button
+          type="button"
+          onClick={actions.onRetry}
+          disabled={busy}
+          className={`${SMALL_BUTTON} border-red-500/60 text-red-300`}
+        >
+          Retry
+        </button>
+      ) : null}
+      {canManage ? (
+        <button
+          type="button"
+          onClick={actions.onRemove}
+          disabled={busy}
+          aria-label={`Remove ${item.song.title}`}
+          className={`${SMALL_BUTTON} border-neutral-700 text-neutral-400`}
+        >
+          ✕
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+export function QueueList({ items, progress, currentUser, isHost, onQueueChanged }: QueueListProps) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function runFor(queueItemId: string, request: () => Promise<unknown>) {
+    setBusyId(queueItemId);
     try {
-      await api.post(`/api/queue/items/${queueItemId}/retry`);
+      await request();
       await onQueueChanged();
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.error(err);
     } finally {
-      setRetryingId(null);
+      setBusyId(null);
     }
+  }
+
+  function actionsFor(item: QueueItem, index: number): ItemActions {
+    const path = `/api/queue/items/${item.id}`;
+    return {
+      busy: busyId === item.id,
+      canManage: canRemoveItem(currentUser, item, isHost),
+      canMoveUp: isHost && index > 0,
+      canMoveDown: isHost && index < items.length - 1,
+      onRetry: () => runFor(item.id, () => api.post(`${path}/retry`)),
+      onRemove: () => runFor(item.id, () => api.del(path)),
+      onMove: (direction) => runFor(item.id, () => api.post(`${path}/move`, { direction })),
+    };
   }
 
   if (items.length === 0) {
@@ -38,12 +117,9 @@ export function QueueList({
 
   return (
     <ul className="flex flex-col gap-2">
-      {items.map((item) => {
+      {items.map((item, index) => {
         const live = progress.get(item.song.id) ?? null;
-        const errMsg =
-          item.state === "failed"
-            ? (live?.errorMessage ?? item.progress?.errorMessage ?? null)
-            : null;
+        const errMsg = errorMessageOf(item, live);
         return (
           <li
             key={item.id}
@@ -65,16 +141,7 @@ export function QueueList({
             </div>
             <div className="flex flex-col items-end gap-2 shrink-0">
               <ProcessingBadge item={item} liveProgress={live} />
-              {canRetryAsHost && item.state === "failed" ? (
-                <button
-                  type="button"
-                  onClick={() => retry(item.id)}
-                  disabled={retryingId === item.id}
-                  className="rounded-full border border-red-500/60 text-red-300 px-3 py-1.5 text-xs font-semibold disabled:opacity-40"
-                >
-                  {retryingId === item.id ? "Retrying…" : "Retry"}
-                </button>
-              ) : null}
+              <QueueItemControls item={item} actions={actionsFor(item, index)} />
             </div>
           </li>
         );

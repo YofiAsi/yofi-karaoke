@@ -21,11 +21,7 @@ type ServerToClientEvents = {
   "player:changed": (data: PlayerChangedEvent) => void;
 };
 
-// Typed client-to-server events
-type ClientToServerEvents = {
-  // Emitted by the player phone when its <audio> fires "ended"
-  "playback:ended": () => void;
-};
+type ClientToServerEvents = Record<string, never>;
 
 export type AppSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 

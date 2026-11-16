@@ -1,6 +1,7 @@
 import { PgNotifyChannels } from "@karaoke/shared";
 import { prisma } from "../db.js";
 import { env } from "../env.js";
+import { notify } from "../playback/notify.js";
 
 export interface PlayerClaimResult {
   userId: string;
@@ -11,10 +12,6 @@ export function isPlayerStale(lastHeartbeat: Date | null | undefined, now = new 
   if (!lastHeartbeat) return true;
   const ageSec = (now.getTime() - lastHeartbeat.getTime()) / 1000;
   return ageSec > env.PLAYER_STALE_SECONDS;
-}
-
-async function notify(channel: string, payload: object): Promise<void> {
-  await prisma.$executeRawUnsafe(`SELECT pg_notify($1, $2)`, channel, JSON.stringify(payload));
 }
 
 export async function claim(userId: string): Promise<PlayerClaimResult> {

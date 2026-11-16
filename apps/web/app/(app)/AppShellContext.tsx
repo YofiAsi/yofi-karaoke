@@ -11,6 +11,7 @@ import type { LrcLine } from "@/lib/lrc";
 
 export interface AppShellState {
   user: User | null;
+  isHost: boolean;
   queue: QueueView | null;
   playbackState: PlaybackStateView | null;
   progress: Map<string, SongProgressEvent>;

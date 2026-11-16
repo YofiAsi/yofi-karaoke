@@ -1,12 +1,12 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
-import { QueueState } from "@prisma/client";
 import { PgNotifyChannels, SongSchema } from "@karaoke/shared";
 import { prisma } from "../db.js";
 import { requireUser } from "../auth/userCookie.js";
 import { requireCurrentHost } from "../auth/requireCurrentHost.js";
 import { enqueueRefetchLyrics } from "../jobs/enqueueRefetchLyrics.js";
-import { nextPosition, notify } from "./queue.js";
+import { notify } from "../playback/notify.js";
+import { queueSong } from "../queue/addition.js";
 
 const MISSING_LYRICS_REFETCH_SPACING_MS = 20_000;
 const MAX_LYRICS_OFFSET_MS = 30_000;
@@ -158,33 +158,14 @@ export async function registerLibraryRoutes(app: FastifyInstance): Promise<void>
         return reply.code(409).send({ error: "song_not_processed" });
       }
 
-      // Dedupe: reject if this song already has an active (non-played/skipped/failed) queue item
-      const existing = await prisma.queueItem.findFirst({
-        where: {
-          songId: song.id,
-          state: { in: [QueueState.queued, QueueState.processing, QueueState.ready] },
-        },
-      });
-      if (existing) {
-        return reply.code(409).send({ error: "already_queued", queueItemId: existing.id });
-      }
-
-      const position = await nextPosition();
-      const queueItem = await prisma.queueItem.create({
-        data: {
-          songId: song.id,
-          requestedByUserId: user.id,
-          position,
-          state: QueueState.ready,
-        },
-      });
+      const queueItem = await queueSong(song, user.id);
 
       await notify(PgNotifyChannels.queueUpdated, { reason: "requeue", queueItemId: queueItem.id });
 
       return reply.code(201).send({
         queueItemId: queueItem.id,
         songId: song.id,
-        state: QueueState.ready,
+        state: queueItem.state,
       });
     },
   });

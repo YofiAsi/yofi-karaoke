@@ -17,7 +17,7 @@ function formatDuration(seconds: number): string {
 
 export default function LibraryPage() {
   const router = useRouter();
-  const { user } = useAppShell();
+  const { user, isHost, playbackState } = useAppShell();
   const [query, setQuery] = useState("");
   const [songs, setSongs] = useState<Song[]>([]);
   const [total, setTotal] = useState(0);
@@ -30,11 +30,11 @@ export default function LibraryPage() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (user && !user.isHost) router.replace("/");
-  }, [user, router]);
+    if (user && playbackState && !isHost) router.replace("/");
+  }, [user, playbackState, isHost, router]);
 
   useEffect(() => {
-    if (!user?.isHost) return;
+    if (!isHost) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     setOffset(0);
     setLoading(true);
@@ -55,7 +55,7 @@ export default function LibraryPage() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query, user]);
+  }, [query, isHost]);
 
   async function loadMore() {
     const nextOffset = offset + PAGE_SIZE;
@@ -94,7 +94,7 @@ export default function LibraryPage() {
   }
 
   if (!user) return null;
-  if (!user.isHost) return null;
+  if (!isHost) return null;
 
   const hasMore = songs.length < total;
 

@@ -10,7 +10,8 @@ import type {
   PlaybackTickEvent,
 } from "@karaoke/shared";
 import { api } from "@/lib/api";
-import { loadStoredUser } from "@/lib/user";
+import { loadStoredUser, validateStoredUser } from "@/lib/user";
+import { isCurrentHost, isPlayerDevice } from "@/lib/roles";
 import { useSocket } from "@/lib/socket";
 import { parseLrc, type LrcLine } from "@/lib/lrc";
 import { PlayerToggle } from "@/components/PlayerToggle";
@@ -39,6 +40,16 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const [audioPosition, setAudioPosition] = useState<number | null>(null);
   const [lyricsVersion, setLyricsVersion] = useState(0);
   const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    validateStoredUser().then((validated) => {
+      if (!cancelled) setUser(validated);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -76,6 +87,10 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       });
     }
     function onHostOrPlayerChanged() { fetchPlaybackState(); }
+    function onReconnect() {
+      fetchQueue();
+      fetchPlaybackState();
+    }
     function onPlaybackTick(data: PlaybackTickEvent) {
       setPlaybackState((prev) =>
         prev ? { ...prev, positionSeconds: data.positionSeconds } : prev
@@ -88,6 +103,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     socket.on("song:progress", onSongProgress);
     socket.on("host:changed", onHostOrPlayerChanged);
     socket.on("player:changed", onHostOrPlayerChanged);
+    socket.io.on("reconnect", onReconnect);
 
     return () => {
       socket.off("queue:updated", onQueueUpdated);
@@ -96,16 +112,20 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       socket.off("song:progress", onSongProgress);
       socket.off("host:changed", onHostOrPlayerChanged);
       socket.off("player:changed", onHostOrPlayerChanged);
+      socket.io.off("reconnect", onReconnect);
     };
   }, [user, socket, fetchQueue, fetchPlaybackState]);
 
+  const isHost = isCurrentHost(user, playbackState);
+  const isPlayer = isPlayerDevice(user, playbackState);
+
   useEffect(() => {
-    if (!user?.isHost) return;
+    if (!isHost) return;
     const id = setInterval(() => {
       api.post("/api/users/heartbeat").catch(console.error);
     }, 10_000);
     return () => clearInterval(id);
-  }, [user]);
+  }, [isHost]);
 
   const currentSong = queue?.current?.song ?? null;
 
@@ -131,7 +151,9 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   }, [currentSong?.id, currentSong?.hasLyrics, lyricsVersion]);
 
   const current = queue?.current ?? null;
-  const currentAudioKey = current?.song.hasInstrumental ? current.song.id : null;
+  const audioSource = current?.song.hasInstrumental
+    ? { queueItemId: current.id, songId: current.song.id }
+    : null;
 
   if (!user) return null;
 
@@ -139,6 +161,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     <AppShellContext.Provider
       value={{
         user,
+        isHost,
         queue,
         playbackState,
         progress,
@@ -152,9 +175,10 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       }}
     >
       <PlayerToggle
-        currentSongId={currentAudioKey}
+        isHost={isHost}
+        isPlayer={isPlayer}
+        source={audioSource}
         playbackState={playbackState}
-        isHost={user.isHost}
         onTick={setAudioPosition}
       />
       {children}
