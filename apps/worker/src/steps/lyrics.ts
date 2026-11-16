@@ -2,7 +2,7 @@
 import { env } from "../env.js";
 import { buildLyricsCandidates, type LyricsCandidate, type LyricsQueryInput } from "./lyricsQuery.js";
 
-export type LyricsSource = "lrclib" | "lrclib_plain" | "ovh" | "none";
+export type LyricsSource = "lrclib" | "lrclib_plain" | "ovh" | "whisper" | "aligned" | "manual" | "none";
 export type LyricsMissReason =
   | "no_candidates"
   | "not_found"

@@ -5,7 +5,8 @@ import { pool, notify } from "../db.js";
 import { env } from "../env.js";
 import { downloadYouTubeAudio } from "../steps/download.js";
 import { separateVocals } from "../steps/separate.js";
-import { fetchLyrics } from "../steps/lyrics.js";
+import { fetchLyrics, type LyricsLogger } from "../steps/lyrics.js";
+import { addTimedLyrics, planTimedLyrics, transcriptionEnabled } from "../steps/timedLyrics.js";
 import { uploadStem } from "../storage/index.js";
 import { markSongFailed, markSongReady } from "../queueState.js";
 import { decideFailure, type FailureDecision } from "./failurePolicy.js";
@@ -113,7 +114,10 @@ async function runPipeline(songId: string, workDir: string, helpers: JobHelpers)
   helpers.logger.info(`separate.py wall=${stems.wallMs}ms vocals=${stems.vocalsPath !== null}`);
 
   await reportProgress(songId, "fetching_lyrics", 80);
-  const lyrics = await fetchLyrics(song, (msg) => helpers.logger.info(`processSong ${songId} ${msg}`));
+  const log: LyricsLogger = (msg) => helpers.logger.info(`processSong ${songId} ${msg}`);
+  const found = await fetchLyrics(song, log);
+  if (transcriptionEnabled() && planTimedLyrics(found) !== "skip") await reportProgress(songId, "fetching_lyrics", 90);
+  const lyrics = await addTimedLyrics(song, found, stems.vocalsPath, log);
 
   const { instrumentalKey, vocalsKey } = await uploadStems(songId, stems);
 

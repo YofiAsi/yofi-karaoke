@@ -1,8 +1,9 @@
-/* Uploads stem files to MinIO or any S3 compatible service. */
+/* Uploads stem files to MinIO or any S3 compatible service and streams them back. */
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import {
   CreateBucketCommand,
+  GetObjectCommand,
   HeadBucketCommand,
   PutObjectCommand,
   S3Client,
@@ -47,4 +48,10 @@ export async function putS3Object(key: string, filePath: string): Promise<void> 
       ContentLength: size,
     }),
   );
+}
+
+export async function getS3ObjectStream(key: string): Promise<NodeJS.ReadableStream> {
+  const response = await s3().send(new GetObjectCommand({ Bucket: env.MINIO_BUCKET, Key: key }));
+  if (!response.Body) throw new Error(`stored object ${key} has no body`);
+  return response.Body as NodeJS.ReadableStream;
 }

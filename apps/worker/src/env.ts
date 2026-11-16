@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 const DEFAULT_SEPARATE_PY = fileURLToPath(new URL("../python/separate.py", import.meta.url));
+const DEFAULT_TRANSCRIBE_PY = fileURLToPath(new URL("../python/transcribe.py", import.meta.url));
 
 const EnvSchema = z
   .object({
@@ -38,6 +39,10 @@ const EnvSchema = z
     LRCLIB_MIN_INTERVAL_MS: z.coerce.number().int().nonnegative().default(1_000),
     LRCLIB_MAX_RETRIES: z.coerce.number().int().nonnegative().default(2),
     LYRICS_OVH_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+    TRANSCRIBE_BACKEND: z.enum(["cuda", "none"]).default("none"),
+    TRANSCRIBE_PY_PATH: z.string().default(DEFAULT_TRANSCRIBE_PY),
+    WHISPER_MODEL_DIR: z.string().min(1).optional(),
+    TRANSCRIBE_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
   })
   .superRefine(requireDriverSettings);
 

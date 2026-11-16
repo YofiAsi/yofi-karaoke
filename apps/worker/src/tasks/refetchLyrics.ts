@@ -1,7 +1,9 @@
-// Reruns only the lyrics lookup for an already processed song, never downgrading stored lyrics.
+// Reruns the lyrics lookup and the vocals stem fallback for an already processed song, never downgrading stored lyrics.
 import type { Task } from "graphile-worker";
 import { pool, notify } from "../db.js";
-import { fetchLyrics, TRANSIENT_MISS_REASONS, type LyricsResult } from "../steps/lyrics.js";
+import { fetchLyrics, TRANSIENT_MISS_REASONS, type LyricsLogger, type LyricsResult, type LyricsSource } from "../steps/lyrics.js";
+import { addTimedLyrics, planTimedLyrics, transcriptionEnabled } from "../steps/timedLyrics.js";
+import { withStemFile } from "../storage/stemFile.js";
 import { PgNotifyChannels } from "@karaoke/shared";
 
 interface RefetchLyricsPayload {
@@ -16,7 +18,11 @@ interface StoredLyricsRow {
   durationSeconds: number;
   lyricsLrc: string | null;
   lyricsPlain: string | null;
+  lyricsSource: string | null;
+  vocalsObjectKey: string | null;
 }
+
+type StoredLyrics = Pick<StoredLyricsRow, "lyricsLrc" | "lyricsPlain"> & { lyricsSource?: string | null };
 
 export type RefetchDecision = "save" | "keep" | "retry";
 
@@ -32,49 +38,92 @@ export async function saveLyrics(songId: string, lyrics: LyricsResult): Promise<
   );
 }
 
-export function decideRefetch(
-  stored: Pick<StoredLyricsRow, "lyricsLrc" | "lyricsPlain">,
-  fresh: LyricsResult,
-): RefetchDecision {
-  if (fresh.missReason && TRANSIENT_MISS_REASONS.has(fresh.missReason)) return "retry";
-  const freshRank = lyricsRank(fresh.syncedLyrics, fresh.plainLyrics);
-  return freshRank >= lyricsRank(stored.lyricsLrc, stored.lyricsPlain) ? "save" : "keep";
+async function saveLyricsIfUnchanged(songId: string, lyrics: LyricsResult, stored: StoredLyrics): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `UPDATE "Song"
+        SET "lyricsLrc" = $2,
+            "lyricsPlain" = $3,
+            "lyricsSource" = $4,
+            "lyricsMissReason" = $5
+      WHERE id = $1
+        AND "lyricsLrc" IS NOT DISTINCT FROM $6
+        AND "lyricsPlain" IS NOT DISTINCT FROM $7`,
+    [songId, lyrics.syncedLyrics, lyrics.plainLyrics, lyrics.source, lyrics.missReason, stored.lyricsLrc, stored.lyricsPlain],
+  );
+  return (rowCount ?? 0) > 0;
 }
 
-function lyricsRank(synced: string | null, plain: string | null): number {
-  if (synced?.trim()) return 2;
-  if (plain?.trim()) return 1;
-  return 0;
+export function lyricsRank(synced: string | null, plain: string | null, source?: string | null): number {
+  if (synced?.trim()) return source === "whisper" ? 2 : source === "lrclib" ? 4 : 3;
+  return plain?.trim() ? 1 : 0;
+}
+
+export function decideRefetch(stored: StoredLyrics, fresh: LyricsResult): RefetchDecision {
+  if (fresh.missReason && TRANSIENT_MISS_REASONS.has(fresh.missReason)) return "retry";
+  const freshRank = lyricsRank(fresh.syncedLyrics, fresh.plainLyrics, fresh.source);
+  return freshRank >= lyricsRank(stored.lyricsLrc, stored.lyricsPlain, stored.lyricsSource) ? "save" : "keep";
+}
+
+export function storedAsResult(stored: StoredLyrics): LyricsResult {
+  return {
+    syncedLyrics: stored.lyricsLrc,
+    plainLyrics: stored.lyricsPlain,
+    source: (stored.lyricsSource ?? "none") as LyricsSource,
+    missReason: null,
+    matchedQuery: null,
+  };
 }
 
 async function loadStoredLyrics(songId: string): Promise<StoredLyricsRow | null> {
   const { rows } = await pool.query<StoredLyricsRow>(
-    `SELECT title, artist, track, "trackArtist", "durationSeconds", "lyricsLrc", "lyricsPlain"
+    `SELECT title, artist, track, "trackArtist", "durationSeconds", "lyricsLrc", "lyricsPlain", "lyricsSource", "vocalsObjectKey"
        FROM "Song" WHERE id = $1`,
     [songId],
   );
   return rows[0] ?? null;
 }
 
+async function withVocalsFallback(stored: StoredLyricsRow, lyrics: LyricsResult, log: LyricsLogger): Promise<LyricsResult> {
+  if (!transcriptionEnabled() || planTimedLyrics(lyrics) === "skip") return lyrics;
+  if (!stored.vocalsObjectKey) {
+    log("timed lyrics skipped: song has no stored vocals stem");
+    return lyrics;
+  }
+  try {
+    return await withStemFile(stored.vocalsObjectKey, (file) => addTimedLyrics(stored, lyrics, file, log));
+  } catch (err) {
+    log(`timed lyrics skipped: vocals stem unreadable: ${err instanceof Error ? err.message : String(err)}`);
+    return lyrics;
+  }
+}
+
+async function freshLyrics(stored: StoredLyricsRow, log: LyricsLogger): Promise<LyricsResult> {
+  if (stored.lyricsSource === "manual") return storedAsResult(stored);
+  return fetchLyrics(stored, log);
+}
+
 export const refetchLyrics: Task = async (payload, helpers) => {
   const { songId } = payload as RefetchLyricsPayload;
   if (!songId) throw new Error("songId missing from payload");
+  const log: LyricsLogger = (msg) => helpers.logger.info(`refetchLyrics ${songId} ${msg}`);
 
   const stored = await loadStoredLyrics(songId);
   if (!stored) {
     helpers.logger.warn(`refetchLyrics ${songId} skipped: song no longer exists`);
     return;
   }
-  const lyrics = await fetchLyrics(stored, (msg) => helpers.logger.info(`refetchLyrics ${songId} ${msg}`));
-  const decision = decideRefetch(stored, lyrics);
-
-  if (decision === "retry") {
-    throw new Error(`lyrics refetch for ${songId} hit a transient failure (${lyrics.missReason}); retrying later`);
+  const looked = await freshLyrics(stored, log);
+  if (decideRefetch(stored, looked) === "retry") {
+    throw new Error(`lyrics refetch for ${songId} hit a transient failure (${looked.missReason}); retrying later`);
   }
-  if (decision === "keep") {
-    helpers.logger.info(`refetchLyrics ${songId} kept stored lyrics; new result (${lyrics.source}) is worse`);
+  const lyrics = await withVocalsFallback(stored, looked, log);
+  if (decideRefetch(stored, lyrics) === "keep") {
+    log(`kept stored lyrics; new result (${lyrics.source}) is worse`);
     return;
   }
-  await saveLyrics(songId, lyrics);
+  if (!(await saveLyricsIfUnchanged(songId, lyrics, stored))) {
+    log("lyrics changed while this job ran; result dropped");
+    return;
+  }
   await notify(PgNotifyChannels.queueUpdated, { reason: "lyrics_refetched", songId });
 };
