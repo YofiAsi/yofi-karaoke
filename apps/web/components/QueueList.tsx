@@ -131,12 +131,14 @@ export function QueueList({ items, progress, currentUser, isHost, onQueueChanged
               className="h-12 w-12 rounded-md object-cover bg-neutral-800 shrink-0"
             />
             <div className="flex-1 min-w-0">
-              <p className="font-medium truncate">{item.song.title}</p>
+              <p dir="auto" className="font-medium truncate text-start">
+                {item.song.title}
+              </p>
               <p className="text-xs text-neutral-400 truncate">
-                {item.song.artist} · {item.requestedByUserName}
+                <bdi>{item.song.artist}</bdi> · <bdi>{item.requestedByUserName}</bdi>
               </p>
               {errMsg ? (
-                <p className="text-xs text-red-400 mt-1 line-clamp-3">{errMsg}</p>
+                <p dir="auto" className="text-xs text-red-400 mt-1 line-clamp-3 text-start">{errMsg}</p>
               ) : null}
             </div>
             <div className="flex flex-col items-end gap-2 shrink-0">
