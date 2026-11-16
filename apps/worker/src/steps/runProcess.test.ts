@@ -54,6 +54,12 @@ describe("runProcess", () => {
     expect(out.stderr.trim()).toBe("warn");
   });
 
+  it("keeps output written right before the child exits", async () => {
+    const out = await runProcess(process.execPath, ["-e", "process.stdout.write('x'.repeat(4_000_000) + 'END')"], { timeoutMs: 20_000 });
+    expect(out.stdout.length).toBe(4_000_003);
+    expect(out.stdout.endsWith("END")).toBe(true);
+  });
+
   it("writes the given input to stdin as UTF-8", async () => {
     const echo = "let s = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (c) => (s += c)); process.stdin.on('end', () => process.stdout.write(JSON.stringify(s)));";
     const out = await runProcess(process.execPath, ["-e", echo], { timeoutMs: 10_000, input: "ゆめ line" });

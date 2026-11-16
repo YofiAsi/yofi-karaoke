@@ -3,7 +3,9 @@ import { env } from "../env.js";
 import type { LyricsLogger, LyricsResult } from "./lyrics.js";
 import { runRomanizer } from "./romanizer.js";
 
-const KANA = /[\u3041-\u3096\u30a1-\u30fa\uff66-\uff9d]/;
+const KANA = /[\u3041-\u3096\u30a1-\u30fa\uff66-\uff9d]/g;
+const HAN = /[\u3005\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g;
+export const MIN_KANA_SHARE = 0.2;
 const LRC_TIMESTAMPS = /^((?:\[\d+:\d+(?:[.:]\d+)?\])+\s*)(.*)$/;
 const LRC_TAG = /^\[[a-z]+:.*\]$/i;
 
@@ -18,12 +20,26 @@ export function romajiEnabled(): boolean {
   return env.LYRICS_ROMAJI_ENABLED === true;
 }
 
+function countOf(text: string, pattern: RegExp): number {
+  return text.match(pattern)?.length ?? 0;
+}
+
+export function kanaShare(text: string): number {
+  const kana = countOf(text, KANA);
+  const han = countOf(text, HAN);
+  return kana + han === 0 ? 0 : kana / (kana + han);
+}
+
 export function isJapanese(text: string | null | undefined): boolean {
-  return Boolean(text && KANA.test(text));
+  return Boolean(text) && kanaShare(text ?? "") >= MIN_KANA_SHARE;
+}
+
+function lyricLines(lyrics: LyricsText): string[] {
+  return [...linesOf(lyrics.syncedLyrics).map((line) => splitLrcLine(line).text), ...linesOf(lyrics.plainLyrics)];
 }
 
 export function needsRomaji(lyrics: LyricsText): boolean {
-  return romajiEnabled() && (isJapanese(lyrics.syncedLyrics) || isJapanese(lyrics.plainLyrics));
+  return romajiEnabled() && isJapanese(lyricLines(lyrics).join("\n"));
 }
 
 export function splitLrcLine(line: string): LrcLine {
@@ -46,9 +62,8 @@ function describeError(err: unknown): string {
 
 async function convertLyrics(lyrics: LyricsResult, log: LyricsLogger): Promise<LyricsResult> {
   const synced = linesOf(lyrics.syncedLyrics).map(splitLrcLine);
-  const plain = linesOf(lyrics.plainLyrics);
   const started = Date.now();
-  const { lines, failed } = await runRomanizer([...synced.map((line) => line.text), ...plain]);
+  const { lines, failed } = await runRomanizer(lyricLines(lyrics));
   const kept = failed > 0 ? `, ${failed} kept in Japanese script after errors` : "";
   log(`romanized ${lines.length} lyric lines in ${Date.now() - started}ms${kept}`);
   return {

@@ -27,6 +27,14 @@ PARTICLES = {"\u306f": "wa", "\u3078": "e", WO: "o"}
 GREETINGS = {"\u3053\u3093\u306b\u3061\u306f": "konnichiwa", "\u3053\u3093\u3070\u3093\u306f": "konbanwa"}
 LAUGHTER = set("\u306f\u30cf\u3078\u30d8\u3042\u30a2\u3063\u30c3")
 NO_GLUE_AFTER = set("\u306b\u306e\u3067\u3068\u304c\u3082\u3078\u3092\u306f\u3084")
+MIN_KANA_SHARE = 0.2
+DIGIT_OR_NUMERAL = re.compile(r"[0-9\uff10-\uff19\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341\u767e\u5343\u4e07\u4f55\u6570\u5e7e]")
+ENHANCED_TAG = re.compile(r"(<\d+:\d+(?:[.:]\d+)?>)")
+PARTICLE_REMAINDERS = {"\u3082", "\u306e", "\u3068"}
+PARTICLE_REMAINDER_STARTS = (
+    "\u3042\u306e", "\u305d\u306e", "\u3053\u306e", "\u3069\u306e", "\u3057\u306a",
+    "\u307e\u3060", "\u3082\u3046", "\u3044\u3064\u3082", "\u3044\u3064\u304b", "\u304d\u3063\u3068", "\u305a\u3063\u3068", "\u3082\u3063\u3068", "\u305f\u3060", "\u306a\u305c", "\u3069\u3053", "\u3069\u3046", "\u3059\u3050", "\u307e\u305f", "\u3044\u307e", "\u306a\u3044", "\u306a\u304f", "\u3044\u306a", "\u3044\u304f", "\u3044\u3053", "\u3044\u3051", "\u3086\u304f", "\u3086\u3053", "\u304b\u3048",
+)
 NO_GLUE_BEFORE = set("\u306e\u304c\u306b\u3068\u3082")
 READING_OVERRIDES = {
     "\u541b": "\u304d\u307f",
@@ -74,8 +82,25 @@ def is_laughter(orig: str) -> bool:
     return bool(orig) and set(orig) <= LAUGHTER
 
 
-def apply_override(orig: str, hira: str) -> tuple:
-    return orig, READING_OVERRIDES.get(orig, hira)
+def next_to_number(segments: list, index: int) -> bool:
+    before = segments[index - 1][0][-1:] if index else ""
+    after = segments[index + 1][0][:1] if index + 1 < len(segments) else ""
+    return bool(DIGIT_OR_NUMERAL.match(before) or DIGIT_OR_NUMERAL.match(after))
+
+
+def overridden(segments: list, index: int) -> tuple:
+    orig, hira = segments[index]
+    if orig not in READING_OVERRIDES or (len(orig) == 1 and next_to_number(segments, index)):
+        return orig, hira
+    return orig, READING_OVERRIDES[orig]
+
+
+def apply_overrides(segments: list) -> list:
+    return [overridden(segments, index) for index in range(len(segments))]
+
+
+def is_particle_remainder(rest: str) -> bool:
+    return rest in PARTICLE_REMAINDERS or rest.startswith(PARTICLE_REMAINDER_STARTS)
 
 
 def split_inner_wo(orig: str, hira: str) -> list:
@@ -102,7 +127,7 @@ def split_trailing_particle(orig: str, hira: str) -> list:
 def split_leading_particle(orig: str, hira: str, previous: str) -> list:
     if len(orig) < 2 or orig[0] not in PARTICLES or not HIRAGANA_ONLY.match(orig) or is_laughter(orig):
         return [(orig, hira)]
-    if not has_kanji_or_katakana(previous):
+    if not has_kanji_or_katakana(previous) or not (orig[0] == WO or is_particle_remainder(orig[1:])):
         return [(orig, hira)]
     return [(orig[0], orig[0]), (orig[1:], hira[1:])]
 
@@ -170,7 +195,7 @@ def other_piece(kakasi, orig: str) -> Piece:
 
 
 def ends_in_small_tsu(hira: str) -> bool:
-    return len(hira) > 1 and hira.endswith(SMALL_TSU)
+    return hira.endswith(SMALL_TSU)
 
 
 def continues_word(segments: list, index: int) -> bool:
@@ -186,13 +211,15 @@ def continues_word(segments: list, index: int) -> bool:
 def word_piece(kakasi, segments: list, index: int) -> Piece:
     orig, hira = segments[index]
     reading = hira[:-1] if ends_in_small_tsu(hira) else hira
-    text = "" if reading == SMALL_TSU else word_romaji(kakasi, orig, reading)
+    text = "" if ends_in_small_tsu(hira) and not reading else word_romaji(kakasi, orig, reading)
     return Piece(text, "word", ends_in_small_tsu(hira) or continues_word(segments, index))
 
 
 def word_pieces(kakasi, segments: list) -> list:
     pieces = []
     for index, (orig, _hira) in enumerate(segments):
+        if orig.startswith(SMALL_TSU) and pieces:
+            pieces[-1].glue = True
         if orig == ITERATION_MARK and pieces:
             pieces.append(Piece(pieces[-1].text, "word"))
         else:
@@ -217,7 +244,7 @@ def geminate_following(pieces: list, segments: list) -> None:
 def flush_words(kakasi, words: list) -> list:
     if not words:
         return []
-    segments = split_particles([apply_override(orig, hira) for orig, hira in words])
+    segments = split_particles(words)
     pieces = word_pieces(kakasi, segments)
     geminate_following(pieces, segments)
     return pieces
@@ -225,7 +252,7 @@ def flush_words(kakasi, words: list) -> list:
 
 def convert_segments(kakasi, segments: list) -> list:
     pieces, words = [], []
-    for orig, hira in segments:
+    for orig, hira in apply_overrides(segments):
         if is_japanese(orig):
             words.append((orig, hira))
             continue
@@ -286,10 +313,27 @@ def segment_line(kakasi, line: str) -> list:
     return segments
 
 
+def convert_text(kakasi, text: str) -> str:
+    return join_pieces(convert_segments(kakasi, segment_line(kakasi, text)))
+
+
+def keep_edge_spaces(original: str, converted: str) -> str:
+    lead = " " if original[:1].isspace() else ""
+    trail = " " if original[-1:].isspace() and converted else ""
+    return lead + converted + trail
+
+
+def convert_part(kakasi, part: str) -> str:
+    if ENHANCED_TAG.fullmatch(part) or not NEEDS_CONVERSION.search(part):
+        return part
+    return keep_edge_spaces(part, convert_text(kakasi, part))
+
+
 def convert_line(kakasi, line: str) -> str:
-    if not NEEDS_CONVERSION.search(line):
-        return line
-    return join_pieces(convert_segments(kakasi, segment_line(kakasi, line)))
+    parts = ENHANCED_TAG.split(line)
+    if len(parts) == 1:
+        return convert_text(kakasi, line) if NEEDS_CONVERSION.search(line) else line
+    return "".join(convert_part(kakasi, part) for part in parts)
 
 
 def load_kakasi():
@@ -298,8 +342,13 @@ def load_kakasi():
     return pykakasi.kakasi()
 
 
-def has_kana(lines: list) -> bool:
-    return any(KANA.search(line) for line in lines)
+def kana_share(text: str) -> float:
+    kana, han = len(KANA.findall(text)), len(KANJI.findall(text))
+    return kana / (kana + han) if kana + han else 0.0
+
+
+def is_japanese_song(lines: list) -> bool:
+    return kana_share("\n".join(lines)) >= MIN_KANA_SHARE
 
 
 def unchanged(lines: list, unavailable=None) -> dict:
@@ -307,7 +356,7 @@ def unchanged(lines: list, unavailable=None) -> dict:
 
 
 def romanize_lines(lines: list, kakasi_factory=load_kakasi) -> dict:
-    if not has_kana(lines):
+    if not is_japanese_song(lines):
         return unchanged(lines)
     try:
         kakasi = kakasi_factory()
