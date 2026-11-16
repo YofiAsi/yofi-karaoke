@@ -3,18 +3,44 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError } from "@/lib/api";
-import { createUser, loadStoredUser } from "@/lib/user";
+import { createUser, validateStoredUser } from "@/lib/user";
+
+const ERROR_MESSAGES: Record<string, string> = {
+  host_name_taken: "That host name is already active. Wait 30 seconds or pick another.",
+  name_taken: "That name is taken. Pick another.",
+  pin_required: "This name needs the host PIN.",
+  invalid_pin: "Wrong PIN. Try again.",
+  too_many_attempts: "Too many wrong PINs. Try again in a few minutes.",
+};
+
+function describeError(err: unknown): string {
+  const code = err instanceof ApiError ? err.code : "";
+  return ERROR_MESSAGES[code] ?? "Could not join. Try again.";
+}
+
+function needsPin(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 403;
+}
 
 export default function NamePage() {
   const router = useRouter();
   const [name, setName] = useState("");
+  const [pin, setPin] = useState("");
+  const [pinVisible, setPinVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const existing = loadStoredUser();
-    if (existing) router.replace("/");
+    validateStoredUser().then((existing) => {
+      if (existing) router.replace("/");
+    });
   }, [router]);
+
+  function handleNameChange(value: string) {
+    setName(value);
+    setPinVisible(false);
+    setPin("");
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,16 +49,11 @@ export default function NamePage() {
     setSubmitting(true);
     setError(null);
     try {
-      await createUser(trimmed);
+      await createUser(trimmed, pinVisible ? pin : undefined);
       router.replace("/");
     } catch (err) {
-      if (err instanceof ApiError && err.code === "host_name_taken") {
-        setError(
-          "That host name is already active. Wait 30 seconds or pick another.",
-        );
-      } else {
-        setError("Could not join. Try again.");
-      }
+      if (needsPin(err)) setPinVisible(true);
+      setError(describeError(err));
     } finally {
       setSubmitting(false);
     }
@@ -51,15 +72,27 @@ export default function NamePage() {
         <input
           autoFocus
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => handleNameChange(e.target.value)}
           placeholder="Your name"
           maxLength={40}
           className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-4 py-3 text-lg outline-none focus:border-neutral-500"
         />
+        {pinVisible && (
+          <input
+            autoFocus
+            type="password"
+            autoComplete="off"
+            value={pin}
+            onChange={(e) => setPin(e.target.value)}
+            placeholder="Host PIN"
+            maxLength={64}
+            className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-4 py-3 text-lg outline-none focus:border-neutral-500"
+          />
+        )}
         {error && <p className="text-sm text-red-400">{error}</p>}
         <button
           type="submit"
-          disabled={submitting || !name.trim()}
+          disabled={submitting || !name.trim() || (pinVisible && !pin)}
           className="w-full rounded-lg bg-white text-black font-semibold py-3 disabled:opacity-40"
         >
           {submitting ? "Joining…" : "Join"}
