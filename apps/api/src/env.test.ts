@@ -5,7 +5,7 @@ const BASE_ENV = vi.hoisted(() => {
     DATABASE_URL: "postgres://test",
     MINIO_ACCESS_KEY: "key",
     MINIO_SECRET_KEY: "secret",
-    HOST_PIN: "4321",
+    HOST_PIN: "432100",
   };
   Object.assign(process.env, base);
   return base;
@@ -20,6 +20,12 @@ describe("parseEnv()", () => {
   it("requires HOST_PIN", () => {
     const { HOST_PIN: _omitted, ...withoutPin } = BASE_ENV;
     expect(() => parseEnv(withoutPin)).toThrow(/HOST_PIN/);
+  });
+
+  it("rejects a HOST_PIN shorter than 6 or longer than 64 characters", () => {
+    expect(() => parseEnv({ ...BASE_ENV, HOST_PIN: "12345" })).toThrow(/HOST_PIN/);
+    expect(() => parseEnv({ ...BASE_ENV, HOST_PIN: "9".repeat(65) })).toThrow(/HOST_PIN/);
+    expect(parseEnv({ ...BASE_ENV, HOST_PIN: "9".repeat(64) }).HOST_PIN).toHaveLength(64);
   });
 
   it("uses a development secret and local origins outside production", () => {

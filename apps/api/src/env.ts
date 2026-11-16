@@ -20,7 +20,7 @@ const RawEnvSchema = z.object({
     .default("false")
     .transform((v) => v === "true"),
   HOST_USER_NAME: z.string().default("Host"),
-  HOST_PIN: z.string().min(4),
+  HOST_PIN: z.string().min(6).max(64),
   HOST_STALE_SECONDS: z.coerce.number().int().positive().default(30),
   PLAYER_STALE_SECONDS: z.coerce.number().int().positive().default(20),
   SESSION_SECRET: z.string().min(1).optional(),
