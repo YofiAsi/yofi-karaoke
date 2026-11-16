@@ -157,7 +157,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
 
   const current = queue?.current ?? null;
   const audioSource = current?.song.hasInstrumental
-    ? { queueItemId: current.id, songId: current.song.id }
+    ? { queueItemId: current.id, songId: current.song.id, hasVocals: current.song.hasVocals }
     : null;
 
   if (!user) return null;
