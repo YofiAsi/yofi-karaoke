@@ -2,7 +2,7 @@
 
 // Player role: the host device claims the player, and only the player device renders <audio>.
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import type { PlaybackStateView } from "@karaoke/shared";
+import type { PlaybackStateView, PositionBody } from "@karaoke/shared";
 import { api } from "@/lib/api";
 
 export interface AudioSource {
@@ -95,15 +95,20 @@ function useVisibilityWatch(audioRef: RefObject<HTMLAudioElement | null>, onVisi
   return hiddenWhilePlaying;
 }
 
-function usePositionReports(audioRef: RefObject<HTMLAudioElement | null>): void {
+function usePositionReports(
+  audioRef: RefObject<HTMLAudioElement | null>,
+  loadedItemIdRef: RefObject<string | null>,
+): void {
   useEffect(() => {
     const id = setInterval(() => {
       const el = audioRef.current;
-      if (!el || el.paused) return;
-      api.post("/api/playback/position", { positionSeconds: el.currentTime }).catch(console.error);
+      const queueItemId = loadedItemIdRef.current;
+      if (!el || el.paused || !queueItemId) return;
+      const report: PositionBody = { queueItemId, positionSeconds: el.currentTime };
+      api.post("/api/playback/position", report).catch(console.error);
     }, POSITION_REPORT_MS);
     return () => clearInterval(id);
-  }, [audioRef]);
+  }, [audioRef, loadedItemIdRef]);
 }
 
 function PlayerAudio({
@@ -116,7 +121,7 @@ function PlayerAudio({
   const [blocked, setBlocked] = useState(false);
   const { acquire: acquireWake, release: releaseWake } = useWakeLock();
   const hiddenWhilePlaying = useVisibilityWatch(audioRef, acquireWake);
-  usePositionReports(audioRef);
+  usePositionReports(audioRef, loadedItemIdRef);
 
   const audioSongId = source?.songId ?? null;
   const loadedItemId = source?.queueItemId ?? null;

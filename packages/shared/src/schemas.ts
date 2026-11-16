@@ -94,8 +94,10 @@ export const SeekBodySchema = z.object({
 });
 
 export const PositionBodySchema = z.object({
+  queueItemId: z.string().uuid(),
   positionSeconds: z.number().nonnegative(),
 });
+export type PositionBody = z.infer<typeof PositionBodySchema>;
 
 export const PlaybackStateSchema = z.object({
   currentQueueItemId: z.string().uuid().nullable(),

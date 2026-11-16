@@ -4,7 +4,9 @@ import {
   PositionBodySchema,
   PlaybackTransitionBodySchema,
   SocketEvents,
+  type PlaybackTickEvent,
   type PlaybackTransitionBody,
+  type PositionBody,
   type PlaybackTransitionResult,
 } from "@karaoke/shared";
 import { prisma } from "../db.js";
@@ -18,7 +20,7 @@ import {
   notifyPlaybackState,
   notifyQueueUpdated,
 } from "../playback/notify.js";
-import { advance, play, rewind } from "../playback/transitions.js";
+import { advance, play, recordPosition, rewind } from "../playback/transitions.js";
 import { asAlreadyQueued, httpError } from "../queue/httpError.js";
 
 async function requirePlayer(req: FastifyRequest): Promise<void> {
@@ -107,9 +109,11 @@ export async function registerPlaybackRoutes(app: FastifyInstance): Promise<void
     schema: { body: PositionBodySchema },
     handler: async (req, reply) => {
       await requirePlayer(req);
-      const { positionSeconds } = req.body as { positionSeconds: number };
-      await prisma.playbackState.update({ where: { id: PLAYBACK_STATE_ID }, data: { positionSeconds } });
-      getIO().emit(SocketEvents.playbackTick, { positionSeconds });
+      const { queueItemId, positionSeconds } = req.body as PositionBody;
+      if (await recordPosition(queueItemId, positionSeconds)) {
+        const tick: PlaybackTickEvent = { queueItemId, positionSeconds };
+        getIO().emit(SocketEvents.playbackTick, tick);
+      }
       return reply.code(204).send();
     },
   });
