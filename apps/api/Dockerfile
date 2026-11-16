@@ -15,4 +15,4 @@ ENV NODE_ENV=production
 COPY --from=builder /app /app
 EXPOSE 4000
 WORKDIR /app/apps/api
-CMD ["sh", "-c", "pnpm prisma migrate deploy && node dist/index.js"]
+CMD ["sh", "-c", "pnpm prisma migrate deploy && exec node dist/index.js"]

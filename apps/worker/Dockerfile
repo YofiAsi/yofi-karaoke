@@ -45,4 +45,4 @@ WORKDIR /app
 COPY --from=node-builder /app /app
 
 WORKDIR /app/apps/worker
-CMD clinfo -l && node dist/index.js
+CMD ["sh", "-c", "clinfo -l && exec node dist/index.js"]

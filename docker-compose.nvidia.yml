@@ -1,6 +1,7 @@
 services:
   web:
     image: karaoke-web
+    init: true
     build:
       context: .
       dockerfile: apps/web/Dockerfile
@@ -24,6 +25,7 @@ services:
 
   api:
     image: karaoke-api
+    init: true
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -56,6 +58,8 @@ services:
 
   worker:
     image: karaoke-worker-nvidia
+    init: true
+    stop_grace_period: 6m
     build:
       context: .
       dockerfile: apps/worker/Dockerfile.nvidia
