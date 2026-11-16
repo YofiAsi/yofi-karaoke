@@ -2,6 +2,7 @@ import type { Server as HttpServer } from "http";
 import { Server } from "socket.io";
 import { QueueState } from "@prisma/client";
 import { env } from "../env.js";
+import { resolveCorsOrigin } from "../auth/corsPolicy.js";
 import { prisma } from "../db.js";
 import { PgNotifyChannels, SocketEvents, type PlaybackStateView } from "@karaoke/shared";
 
@@ -69,7 +70,7 @@ async function autoAdvanceIfStill(itemIdAtEnd: string | null): Promise<void> {
 export function setupSocketIO(httpServer: HttpServer): Server {
   io = new Server(httpServer, {
     cors: {
-      origin: env.CORS_ORIGIN === "*" ? true : env.CORS_ORIGIN.split(","),
+      origin: resolveCorsOrigin(env.CORS_ORIGINS),
       credentials: true,
     },
     cookie: false,
