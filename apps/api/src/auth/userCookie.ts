@@ -26,7 +26,7 @@ export async function loadUserFromCookie(req: FastifyRequest): Promise<AuthUser 
 }
 
 function shouldUseSecureCookie(req: FastifyRequest): boolean {
-  return req.protocol === "https" || env.NODE_ENV === "production";
+  return req.protocol === "https";
 }
 
 export function setUserCookie(req: FastifyRequest, reply: FastifyReply, userId: string): void {

@@ -10,7 +10,7 @@ const { mockPrisma } = vi.hoisted(() => ({
 }));
 
 vi.mock("../env.js", () => ({
-  env: { COOKIE_NAME: "karaoke_uid", SESSION_SECRET: SECRET, NODE_ENV: "development" },
+  env: { COOKIE_NAME: "karaoke_uid", SESSION_SECRET: SECRET, NODE_ENV: "production" },
 }));
 vi.mock("../db.js", () => ({ prisma: mockPrisma }));
 
@@ -98,6 +98,21 @@ describe("user cookie over HTTP", () => {
       headers: { "x-forwarded-proto": "https" },
     });
     expect(String(login.headers["set-cookie"])).toMatch(/Secure/);
+  });
+
+  it("leaves Secure off for plain HTTP in production so LAN use keeps working", async () => {
+    const app = Fastify({ trustProxy: true });
+    await app.register(cookie, { secret: SECRET });
+    app.post("/login", async (req, reply) => {
+      setUserCookie(req, reply, USER_ID);
+      return reply.send({ ok: true });
+    });
+    const login = await app.inject({
+      method: "POST",
+      url: "/login",
+      headers: { "x-forwarded-proto": "http" },
+    });
+    expect(String(login.headers["set-cookie"])).not.toMatch(/Secure/);
   });
 
   it("ignores a forged unsigned cookie holding a known user id", async () => {
