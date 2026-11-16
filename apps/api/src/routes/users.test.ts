@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
 import { serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
+import { Prisma } from "@prisma/client";
 
 const SECRET = vi.hoisted(() => "test-session-secret-at-least-32-chars!");
 const HOST_ID = "11111111-1111-4111-8111-111111111111";
@@ -9,7 +10,8 @@ const GUEST_ID = "22222222-2222-4222-8222-222222222222";
 
 const { mockPrisma, mockClaim } = vi.hoisted(() => ({
   mockPrisma: {
-    user: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+    user: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+    $queryRaw: vi.fn(),
     $executeRawUnsafe: vi.fn(),
   },
   mockClaim: vi.fn(),
@@ -50,7 +52,7 @@ function postUser(app: FastifyInstance, payload: Record<string, string>) {
 describe("POST /api/users host claim", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    hostPinLimiter.reset("127.0.0.1");
+    hostPinLimiter.clear();
     mockPrisma.$executeRawUnsafe.mockResolvedValue(undefined);
     mockClaim.mockResolvedValue({ kind: "already_host", userId: HOST_ID, userName: "Host" });
   });
@@ -101,21 +103,19 @@ describe("POST /api/users guest join", () => {
   });
 
   it("reuses an existing guest matched case insensitively", async () => {
-    mockPrisma.user.findFirst.mockResolvedValue({ id: GUEST_ID, name: "Alice", isHost: false });
+    mockPrisma.$queryRaw.mockResolvedValue([{ id: GUEST_ID, name: "Alice", isHost: false }]);
     mockPrisma.user.update.mockResolvedValue({});
 
     const res = await postUser(await buildApp(), { name: "alice" });
 
-    expect(mockPrisma.user.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { name: { equals: "alice", mode: "insensitive" } } }),
-    );
+    expect(mockPrisma.$queryRaw.mock.calls[0][1]).toBe("alice");
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ id: GUEST_ID, name: "Alice", isHost: false });
     expect(mockPrisma.user.create).not.toHaveBeenCalled();
   });
 
   it("refuses to hand out a user flagged as host through the guest path", async () => {
-    mockPrisma.user.findFirst.mockResolvedValue({ id: HOST_ID, name: "OldHost", isHost: true });
+    mockPrisma.$queryRaw.mockResolvedValue([{ id: HOST_ID, name: "OldHost", isHost: true }]);
 
     const res = await postUser(await buildApp(), { name: "oldhost" });
 
@@ -125,12 +125,38 @@ describe("POST /api/users guest join", () => {
   });
 
   it("creates a new guest when the name is unused", async () => {
-    mockPrisma.user.findFirst.mockResolvedValue(null);
+    mockPrisma.$queryRaw.mockResolvedValue([]);
     mockPrisma.user.create.mockResolvedValue({ id: GUEST_ID, name: "Bob", isHost: false });
 
     const res = await postUser(await buildApp(), { name: "Bob" });
 
     expect(res.statusCode).toBe(201);
     expect(res.json()).toEqual({ id: GUEST_ID, name: "Bob", isHost: false });
+  });
+
+  it("returns the winning row when a concurrent join creates the same name first", async () => {
+    mockPrisma.$queryRaw
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: GUEST_ID, name: "Bob", isHost: false }]);
+    mockPrisma.user.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("duplicate", { code: "P2002", clientVersion: "test" }),
+    );
+    mockPrisma.user.update.mockResolvedValue({});
+
+    const res = await postUser(await buildApp(), { name: "Bob" });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ id: GUEST_ID, name: "Bob", isHost: false });
+    expect(String(res.headers["set-cookie"])).toMatch(new RegExp(`^karaoke_uid=${GUEST_ID}\\.`));
+  });
+
+  it("still fails on database errors other than unique violations", async () => {
+    mockPrisma.$queryRaw.mockResolvedValue([]);
+    mockPrisma.user.create.mockRejectedValue(new Error("db down"));
+
+    const res = await postUser(await buildApp(), { name: "Bob" });
+
+    expect(res.statusCode).toBe(500);
+    expect(res.headers["set-cookie"]).toBeUndefined();
   });
 });
