@@ -23,6 +23,7 @@ export default function HomePage() {
     setLyricsOffsetMs,
     audioPosition,
     refetchQueue,
+    positionClock,
   } = useAppShell();
   const [queueOpen, setQueueOpen] = useState(false);
 
@@ -94,6 +95,8 @@ export default function HomePage() {
             positionSeconds={audioPosition ?? playbackState?.positionSeconds ?? 0}
             plainText={plainLyrics ?? undefined}
             offsetMs={lyricsOffsetMs}
+            clock={positionClock}
+            durationSeconds={current.song.durationSeconds}
             expandToFill
           />
         )}

@@ -8,6 +8,7 @@ import type {
   SongProgressEvent,
 } from "@karaoke/shared";
 import type { LrcLine } from "@/lib/lrc";
+import type { PositionClock } from "@/lib/positionClock";
 
 export interface AppShellState {
   user: User | null;
@@ -22,6 +23,7 @@ export interface AppShellState {
   audioPosition: number | null;
   setAudioPosition: (pos: number) => void;
   refetchQueue: () => Promise<void>;
+  positionClock?: PositionClock | null;
 }
 
 export const AppShellContext = createContext<AppShellState | null>(null);
