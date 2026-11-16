@@ -36,6 +36,7 @@ const { mockTx, mockPrisma } = vi.hoisted(() => {
 vi.mock("../env.js", () => ({
   env: {
     HOST_USER_NAME: "Host",
+    HOST_PIN: "2468",
     HOST_STALE_SECONDS: 30,
     PLAYER_STALE_SECONDS: 20,
   },
@@ -134,10 +135,13 @@ describe("claimOrConflict()", () => {
     mockTx.user.create.mockResolvedValue({ id: "u1", name: "Host" });
     mockTx.playbackState.update.mockResolvedValue({});
 
-    const result = await claimOrConflict("Host");
+    const result = await claimOrConflict();
 
     expect(result).toEqual({ kind: "created", userId: "u1", userName: "Host" });
     expect(mockTx.user.create).toHaveBeenCalledOnce();
+    expect(mockTx.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ name: "Host" }) }),
+    );
     expect(mockTx.playbackState.update).toHaveBeenCalledOnce();
   });
 
@@ -148,7 +152,7 @@ describe("claimOrConflict()", () => {
     mockTx.user.update.mockResolvedValue({});
     mockTx.playbackState.update.mockResolvedValue({});
 
-    const result = await claimOrConflict("Host");
+    const result = await claimOrConflict();
 
     expect(result).toEqual({ kind: "taken_over", userId: "u2", userName: "Host" });
     expect(mockTx.user.update).toHaveBeenCalledOnce();
@@ -166,7 +170,7 @@ describe("claimOrConflict()", () => {
     mockTx.user.update.mockResolvedValue({});
     mockTx.playbackState.update.mockResolvedValue({});
 
-    const result = await claimOrConflict("Host");
+    const result = await claimOrConflict();
 
     expect(result).toEqual({ kind: "taken_over", userId: "u3", userName: "Host" });
     expect(mockTx.playbackState.update).toHaveBeenCalledOnce();
@@ -181,10 +185,28 @@ describe("claimOrConflict()", () => {
       hostLastHeartbeatAt: freshTime,
     });
 
-    const result = await claimOrConflict("Host");
+    const result = await claimOrConflict();
 
     expect(result).toEqual({ kind: "conflict" });
     expect(mockTx.user.update).not.toHaveBeenCalled();
+    expect(mockTx.user.create).not.toHaveBeenCalled();
+  });
+
+  it("looks the host up case insensitively so differently cased names map to one user", async () => {
+    mockTx.user.findFirst.mockResolvedValue({ id: "u6", name: "host" });
+    mockTx.playbackState.findUnique.mockResolvedValue(null);
+    mockTx.user.update.mockResolvedValue({});
+    mockTx.playbackState.update.mockResolvedValue({});
+
+    const result = await claimOrConflict();
+
+    expect(mockTx.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { name: { equals: "Host", mode: "insensitive" } },
+        orderBy: { createdAt: "asc" },
+      }),
+    );
+    expect(result).toEqual({ kind: "taken_over", userId: "u6", userName: "host" });
     expect(mockTx.user.create).not.toHaveBeenCalled();
   });
 
@@ -197,7 +219,7 @@ describe("claimOrConflict()", () => {
       hostLastHeartbeatAt: freshTime,
     });
 
-    const result = await claimOrConflict("Host");
+    const result = await claimOrConflict();
 
     expect(result).toEqual({ kind: "already_host", userId: "u5", userName: "Host" });
     expect(mockTx.user.update).not.toHaveBeenCalled();

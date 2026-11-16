@@ -2,6 +2,8 @@ import type { Server as HttpServer } from "http";
 import { Server } from "socket.io";
 import { QueueState } from "@prisma/client";
 import { env } from "../env.js";
+import { resolveCorsOrigin } from "../auth/corsPolicy.js";
+import { readUserIdFromCookieHeader } from "../auth/signedUserId.js";
 import { prisma } from "../db.js";
 import { PgNotifyChannels, SocketEvents, type PlaybackStateView } from "@karaoke/shared";
 
@@ -69,19 +71,18 @@ async function autoAdvanceIfStill(itemIdAtEnd: string | null): Promise<void> {
 export function setupSocketIO(httpServer: HttpServer): Server {
   io = new Server(httpServer, {
     cors: {
-      origin: env.CORS_ORIGIN === "*" ? true : env.CORS_ORIGIN.split(","),
+      origin: resolveCorsOrigin(env.CORS_ORIGINS),
       credentials: true,
     },
     cookie: false,
   });
 
   io.on("connection", (socket) => {
-    // Read cookie from handshake for identity (viewer mode allowed)
-    const rawCookie = socket.handshake.headers.cookie ?? "";
-    const cookieName = env.COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const match = rawCookie.match(new RegExp(`(?:^|;\\s*)${cookieName}=([^;]+)`));
-    const userId = match ? decodeURIComponent(match[1]) : null;
-    socket.data.userId = userId;
+    socket.data.userId = readUserIdFromCookieHeader(
+      socket.handshake.headers.cookie,
+      env.COOKIE_NAME,
+      env.SESSION_SECRET,
+    );
 
     // Player phone signals audio has ended; server auto-advances after a 3s grace period.
     // If the host already skipped (currentQueueItemId changed), we no-op.

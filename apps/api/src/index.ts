@@ -8,7 +8,9 @@ import {
 } from "fastify-type-provider-zod";
 
 import { env } from "./env.js";
+import { prisma } from "./db.js";
 import { attachUserHook } from "./auth/userCookie.js";
+import { resolveCorsOrigin } from "./auth/corsPolicy.js";
 import { registerUserRoutes } from "./routes/users.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerQueueRoutes } from "./routes/queue.js";
@@ -17,6 +19,15 @@ import { registerAudioRoutes } from "./routes/audio.js";
 import { registerPlaybackRoutes } from "./routes/playback.js";
 import { setupSocketIO } from "./sockets/index.js";
 import { startBroadcastBridge } from "./sockets/broadcast.js";
+
+async function databaseIsReachable(): Promise<boolean> {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function build() {
   const app = Fastify({
@@ -28,7 +39,7 @@ async function build() {
   app.setSerializerCompiler(serializerCompiler);
 
   await app.register(cors, {
-    origin: env.CORS_ORIGIN === "*" ? true : env.CORS_ORIGIN.split(","),
+    origin: resolveCorsOrigin(env.CORS_ORIGINS),
     credentials: true,
   });
 
@@ -36,7 +47,10 @@ async function build() {
 
   app.addHook("preHandler", attachUserHook);
 
-  app.get("/api/health", async () => ({ ok: true }));
+  app.get("/api/health", async (_req, reply) => {
+    const healthy = await databaseIsReachable();
+    return reply.code(healthy ? 200 : 503).send({ ok: healthy });
+  });
 
   await registerUserRoutes(app);
   await registerSearchRoutes(app);

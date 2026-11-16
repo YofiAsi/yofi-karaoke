@@ -22,6 +22,7 @@ export type ProcessingStep = z.infer<typeof ProcessingStepSchema>;
 
 export const CreateUserBodySchema = z.object({
   name: z.string().trim().min(1).max(40),
+  pin: z.string().min(1).max(64).optional(),
 });
 export type CreateUserBody = z.infer<typeof CreateUserBodySchema>;
 
@@ -45,8 +46,10 @@ export const SearchQuerySchema = z.object({
   q: z.string().trim().min(1).max(200),
 });
 
+export const YoutubeVideoIdSchema = z.string().regex(/^[A-Za-z0-9_-]{11}$/);
+
 export const AddQueueBodySchema = z.object({
-  youtubeVideoId: z.string().min(1).max(32),
+  youtubeVideoId: YoutubeVideoIdSchema,
 });
 export type AddQueueBody = z.infer<typeof AddQueueBodySchema>;
 

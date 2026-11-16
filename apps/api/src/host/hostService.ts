@@ -1,5 +1,6 @@
 import { prisma } from "../db.js";
 import { env } from "../env.js";
+import { nameMatches, OLDEST_FIRST } from "../auth/userName.js";
 
 export interface HostClaimResult {
   kind: "created" | "taken_over" | "already_host";
@@ -13,8 +14,12 @@ export interface HostConflict {
 
 export type HostOutcome = HostClaimResult | HostConflict;
 
+export function hostDisplayName(): string {
+  return env.HOST_USER_NAME.trim();
+}
+
 export function isHostName(name: string): boolean {
-  return name.trim().toLowerCase() === env.HOST_USER_NAME.trim().toLowerCase();
+  return name.trim().toLowerCase() === hostDisplayName().toLowerCase();
 }
 
 export function isStale(lastHeartbeat: Date | null | undefined, now = new Date()): boolean {
@@ -23,11 +28,13 @@ export function isStale(lastHeartbeat: Date | null | undefined, now = new Date()
   return ageSec > env.HOST_STALE_SECONDS;
 }
 
-export async function claimOrConflict(name: string): Promise<HostOutcome> {
+export async function claimOrConflict(): Promise<HostOutcome> {
   const now = new Date();
+  const name = hostDisplayName();
   return prisma.$transaction(async (tx) => {
     const existingHost = await tx.user.findFirst({
-      where: { name },
+      where: nameMatches(name),
+      orderBy: OLDEST_FIRST,
     });
 
     const playback = await tx.playbackState.findUnique({ where: { id: 1 } });
