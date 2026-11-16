@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { PlaybackStateView, PositionBody } from "@karaoke/shared";
 import { api } from "@/lib/api";
+import type { PlayerPositionReader } from "@/lib/livePosition";
 import { rememberReport, shouldSeekPlayer } from "@/lib/seekEcho";
 import type { StemPlayer } from "@/lib/stemPlayer";
 import { useStemPlayer, type LoadStatus, type StemSource } from "@/lib/useStemPlayer";
@@ -21,6 +22,7 @@ interface PlayerToggleProps {
   playbackState: PlaybackStateView | null;
   onTick?: (positionSeconds: number, queueItemId: string) => void;
   onVocalsFailed?: (songId: string) => void;
+  onPositionReader?: (reader: PlayerPositionReader | null) => void;
 }
 
 const HEARTBEAT_MS = 10_000;
@@ -147,6 +149,22 @@ function usePositionTicks(
   return emit;
 }
 
+function usePositionReader(
+  engine: StemPlayer | null,
+  readyItemId: string | null,
+  onPositionReader?: (reader: PlayerPositionReader | null) => void,
+): void {
+  useEffect(() => {
+    if (!onPositionReader) return;
+    if (!engine || !readyItemId) {
+      onPositionReader(null);
+      return;
+    }
+    onPositionReader({ queueItemId: readyItemId, read: () => engine.position() });
+    return () => onPositionReader(null);
+  }, [engine, readyItemId, onPositionReader]);
+}
+
 function useLatestRef<T>(value: T) {
   const ref = useRef(value);
   ref.current = value;
@@ -219,6 +237,7 @@ function PlayerAudio({
   playbackState,
   onTick,
   onVocalsFailed,
+  onPositionReader,
 }: Omit<PlayerToggleProps, "isHost" | "isPlayer">) {
   const recentReportsRef = useRef<number[]>([]);
   const loadedItemId = source?.queueItemId ?? null;
@@ -235,6 +254,7 @@ function PlayerAudio({
   const gain = loadedState?.vocalsGain ?? 0;
   const { acquire: acquireWake, release: releaseWake } = useWakeLock();
   const emitTick = usePositionTicks(engine, ready ? loadedItemId : null, onTick);
+  usePositionReader(engine, ready ? loadedItemId : null, onPositionReader);
 
   const isAudible = useCallback(() => running && !!engine?.isPlaying(), [running, engine]);
   const onVisible = useCallback(() => {

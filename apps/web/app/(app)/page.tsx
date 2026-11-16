@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useAppShell } from "./AppShellContext";
 import { NowPlaying } from "@/components/NowPlaying";
 import { HostControls } from "@/components/HostControls";
-import { LyricsView } from "@/components/LyricsView";
+import { LyricsDisplaySwitch, useLyricsDisplay } from "@/components/lyricsDisplays";
 import { QueueDrawer } from "@/components/QueueDrawer";
 import { VocalsSlider } from "@/components/VocalsSlider";
 import { canControlVocals } from "@/lib/roles";
@@ -19,15 +19,19 @@ export default function HomePage() {
     progress,
     lrcLines,
     plainLyrics,
+    wordTimings,
+    lyricsLoading,
     lyricsOffsetMs,
     lyricsSource,
     setLyricsOffsetMs,
     lyricsPosition,
     refetchQueue,
     positionClock,
+    playerPosition,
     failedVocalsSongId,
   } = useAppShell();
   const [queueOpen, setQueueOpen] = useState(false);
+  const { display, choose } = useLyricsDisplay("home");
 
   if (!user) return null;
 
@@ -65,9 +69,10 @@ export default function HomePage() {
       </header>
 
       <section className="flex-1 flex flex-col min-h-0 w-full bg-neutral-900 border-t border-neutral-800 px-5 pt-4 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))]">
-        <p className="text-xs uppercase tracking-widest text-neutral-500 shrink-0">
-          Now playing
-        </p>
+        <div className="shrink-0 flex items-center justify-between gap-3">
+          <p className="text-xs uppercase tracking-widest text-neutral-500">Now playing</p>
+          <LyricsDisplaySwitch selectedId={display.id} onChoose={choose} />
+        </div>
         <div className="shrink-0">
           <NowPlaying
             current={current}
@@ -94,16 +99,19 @@ export default function HomePage() {
           )}
         </div>
         {current && (
-          <LyricsView
-            key={current.id}
+          <display.Component
+            key={`${display.id}:${current.id}`}
+            loading={lyricsLoading ?? false}
             lines={lrcLines}
+            wordTimings={wordTimings}
             positionSeconds={lyricsPosition}
             plainText={plainLyrics ?? undefined}
             offsetMs={lyricsOffsetMs}
             source={lyricsSource}
             clock={positionClock}
+            playerPosition={playerPosition}
             durationSeconds={current.song.durationSeconds}
-            expandToFill
+            surface="home"
           />
         )}
       </section>

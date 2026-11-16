@@ -6,9 +6,11 @@ import type {
   QueueView,
   PlaybackStateView,
   SongProgressEvent,
+  LyricsWordTimings,
 } from "@karaoke/shared";
 import type { LrcLine } from "@/lib/lrc";
 import type { PositionClock } from "@/lib/positionClock";
+import type { PlayerPositionReader } from "@/lib/livePosition";
 
 export interface AppShellState {
   user: User | null;
@@ -18,12 +20,15 @@ export interface AppShellState {
   progress: Map<string, SongProgressEvent>;
   lrcLines: LrcLine[];
   plainLyrics: string | null;
+  wordTimings?: LyricsWordTimings | null;
+  lyricsLoading?: boolean;
   lyricsOffsetMs: number;
   lyricsSource?: string | null;
   setLyricsOffsetMs: (offsetMs: number) => void;
   lyricsPosition: number;
   refetchQueue: () => Promise<void>;
   positionClock?: PositionClock | null;
+  playerPosition?: PlayerPositionReader | null;
   failedVocalsSongId?: string | null;
 }
 

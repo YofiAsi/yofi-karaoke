@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
-import { PgNotifyChannels, SongSchema } from "@karaoke/shared";
+import { Prisma } from "@prisma/client";
+import { PgNotifyChannels, SongSchema, parseWordTimings } from "@karaoke/shared";
 import { prisma } from "../db.js";
 import { requireUser } from "../auth/userCookie.js";
 import { requireCurrentHost } from "../auth/requireCurrentHost.js";
@@ -50,6 +51,7 @@ export async function registerLibraryRoutes(app: FastifyInstance): Promise<void>
       return reply.send({
         lrc: song.lyricsLrc ?? null,
         plain: song.lyricsPlain ?? null,
+        wordTimings: song.lyricsLrc ? parseWordTimings(song.lyricsWordTimings) : null,
         offsetMs: song.lyricsOffsetMs,
         source: song.lyricsSource ?? null,
         missReason: song.lyricsMissReason ?? null,
@@ -93,7 +95,13 @@ export async function registerLibraryRoutes(app: FastifyInstance): Promise<void>
       const { text } = req.body as z.infer<typeof ManualLyricsBodySchema>;
       const updated = await prisma.song.updateMany({
         where: { id: songId },
-        data: { lyricsPlain: cleanPastedLyrics(text), lyricsLrc: null, lyricsSource: "manual", lyricsMissReason: null },
+        data: {
+          lyricsPlain: cleanPastedLyrics(text),
+          lyricsLrc: null,
+          lyricsWordTimings: Prisma.DbNull,
+          lyricsSource: "manual",
+          lyricsMissReason: null,
+        },
       });
       if (updated.count === 0) {
         return reply.code(404).send({ error: "song_not_found" });

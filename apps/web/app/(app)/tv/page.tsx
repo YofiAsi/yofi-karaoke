@@ -1,13 +1,12 @@
 "use client";
 
 import type { QueueItem } from "@karaoke/shared";
-import { LyricsView } from "@/components/LyricsView";
+import { LyricsDisplaySwitch, useLyricsDisplay } from "@/components/lyricsDisplays";
 import { JoinQrCode } from "@/components/JoinQrCode";
 import { upNext } from "@/lib/upNext";
 import { useAppShell } from "../AppShellContext";
 
 const UP_NEXT_COUNT = 3;
-const TV_LYRICS_SIZE = "[&_p]:!text-[clamp(2rem,4.2vw,4.75rem)] [&_p]:!leading-tight";
 
 function NowSinging({ item }: { item: QueueItem }) {
   return (
@@ -63,7 +62,19 @@ function UpNextList({ items }: { items: QueueItem[] }) {
 }
 
 export default function TvPage() {
-  const { queue, lrcLines, plainLyrics, lyricsOffsetMs, lyricsSource, lyricsPosition, positionClock } = useAppShell();
+  const {
+    queue,
+    lrcLines,
+    plainLyrics,
+    wordTimings,
+    lyricsLoading,
+    lyricsOffsetMs,
+    lyricsSource,
+    lyricsPosition,
+    positionClock,
+    playerPosition,
+  } = useAppShell();
+  const { display, choose } = useLyricsDisplay("tv");
   const current = queue?.current ?? null;
   const upcoming = queue?.upcoming ?? [];
 
@@ -73,19 +84,20 @@ export default function TvPage() {
         {current ? (
           <>
             <NowSinging item={current} />
-            <div className={`flex-1 min-h-0 flex flex-col ${TV_LYRICS_SIZE}`}>
-              <LyricsView
-                key={current.id}
-                lines={lrcLines}
-                positionSeconds={lyricsPosition}
-                plainText={plainLyrics ?? undefined}
-                offsetMs={lyricsOffsetMs}
-                source={lyricsSource}
-                clock={positionClock}
-                durationSeconds={current.song.durationSeconds}
-                expandToFill
-              />
-            </div>
+            <display.Component
+              key={`${display.id}:${current.id}`}
+              loading={lyricsLoading ?? false}
+              lines={lrcLines}
+              wordTimings={wordTimings}
+              positionSeconds={lyricsPosition}
+              plainText={plainLyrics ?? undefined}
+              offsetMs={lyricsOffsetMs}
+              source={lyricsSource}
+              clock={positionClock}
+              playerPosition={playerPosition}
+              durationSeconds={current.song.durationSeconds}
+              surface="tv"
+            />
           </>
         ) : (
           <IdleMessage hasUpcoming={upcoming.length > 0} />
@@ -93,7 +105,8 @@ export default function TvPage() {
       </main>
       <aside className="w-[clamp(15rem,24vw,26rem)] shrink-0 border-s border-neutral-800 bg-neutral-950 flex flex-col gap-8 p-[clamp(1.25rem,2vw,2.5rem)]">
         <UpNextList items={upNext(upcoming, UP_NEXT_COUNT)} />
-        <div className="mt-auto">
+        <div className="mt-auto flex flex-col gap-6">
+          <LyricsDisplaySwitch selectedId={display.id} onChoose={choose} className="self-start opacity-60 hover:opacity-100 focus-within:opacity-100" />
           <JoinQrCode />
         </div>
       </aside>

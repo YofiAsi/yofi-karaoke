@@ -132,7 +132,7 @@ describe("refetchLyrics task", () => {
     mockEnabled.mockReturnValue(true);
     mockQuery.mockResolvedValueOnce({ rows: [{ ...row, ...storedNone, lyricsSource: "none", vocalsObjectKey: "vocals/s1.mp3" }] });
     mockFetchLyrics.mockResolvedValueOnce(notFound);
-    mockAddTimed.mockResolvedValueOnce(whisperResult);
+    mockAddTimed.mockResolvedValueOnce({ lyrics: whisperResult, words: null });
     await refetchLyrics({ songId: "s1" }, helpers);
     expect(mockAddTimed.mock.calls[0][2]).toBe("/stems/vocals/s1.mp3");
     expect(mockAddTimed.mock.calls[0][4]).toEqual({ tier: 1, order: 7 });
@@ -143,10 +143,14 @@ describe("refetchLyrics task", () => {
   it("aligns pasted lyrics without asking LRCLIB", async () => {
     mockEnabled.mockReturnValue(true);
     mockQuery.mockResolvedValueOnce({ rows: [{ ...row, ...storedPlain, lyricsSource: "manual", vocalsObjectKey: "vocals/s1.mp3" }] });
-    mockAddTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => ({ ...lyrics, syncedLyrics: "[00:02.00]old" }));
+    mockAddTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => ({
+      lyrics: { ...lyrics, syncedLyrics: "[00:02.00]old" },
+      words: [heardWord("old", 2.1, 2.6)],
+    }));
     await refetchLyrics({ songId: "s1" }, helpers);
     expect(mockFetchLyrics).not.toHaveBeenCalled();
     expect(mockQuery.mock.calls[1][1].slice(0, 4)).toEqual(["s1", "[00:02.00]old", "old", "manual"]);
+    expect(savedTimings(mockQuery.mock.calls[1][1][7])).toEqual([{ start: 2, end: 2.6, words: [{ text: "old", start: 2.1, end: 2.6 }] }]);
   });
 
   describe("Japanese lyrics", () => {
@@ -160,7 +164,7 @@ describe("refetchLyrics task", () => {
       mockQuery.mockResolvedValueOnce({ rows: [japaneseRow] });
       mockFetchLyrics.mockResolvedValueOnce(notFound);
       await refetchLyrics({ songId: "s1" }, helpers);
-      expect(textUpdate()?.[1]).toEqual(["s1", "[00:01.00]yume o mita", "yume o mita", "[00:01.00]夢をみた", "夢をみた"]);
+      expect(textUpdate()?.[1]).toEqual(["s1", "[00:01.00]yume o mita", "yume o mita", "[00:01.00]夢をみた", "夢をみた", null]);
       expect(mockNotify).toHaveBeenCalledOnce();
     });
 
@@ -182,10 +186,14 @@ describe("refetchLyrics task", () => {
     it("aligns pasted Japanese lyrics in their script and stores them as romaji", async () => {
       mockEnabled.mockReturnValue(true);
       mockQuery.mockResolvedValueOnce({ rows: [{ ...row, lyricsLrc: null, lyricsPlain: "夢をみた", lyricsSource: "manual", vocalsObjectKey: "vocals/s1.mp3" }] });
-      mockAddTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => ({ ...lyrics, syncedLyrics: "[00:05.00]夢をみた" }));
+      mockAddTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => ({
+        lyrics: { ...lyrics, syncedLyrics: "[00:05.00]夢をみた" },
+        words: [heardWord("夢をみた", 5.1, 6)],
+      }));
       await refetchLyrics({ songId: "s1" }, helpers);
       expect(mockAddTimed.mock.calls[0][1].plainLyrics).toBe("夢をみた");
       expect(mockQuery.mock.calls[1][1].slice(0, 4)).toEqual(["s1", "[00:05.00]yume o mita", "yume o mita", "manual"]);
+      expect(mockQuery.mock.calls[1][1][7]).toBeNull();
     });
 
     it("keeps good stored lyrics untouched when they are not Japanese", async () => {
@@ -200,6 +208,53 @@ describe("refetchLyrics task", () => {
       mockFetchLyrics.mockResolvedValueOnce(notFound);
       mockRomanize.mockRejectedValueOnce(new Error("pykakasi unavailable: ModuleNotFoundError"));
       await expect(refetchLyrics({ songId: "s1" }, helpers)).resolves.toBeUndefined();
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(mockNotify).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("word timings", () => {
+    const vocalsRow = { ...row, lyricsSource: "lrclib", vocalsObjectKey: "vocals/s1.mp3" };
+
+    function textUpdate() {
+      return mockQuery.mock.calls.find(([sql]) => String(sql).includes('"lyricsPlain" = $3') && !String(sql).includes("lyricsSource"));
+    }
+
+    it("clears word timings in the same write that replaces the LRC without a transcript", async () => {
+      mockFetchLyrics.mockResolvedValueOnce(synced);
+      await refetchLyrics({ songId: "s1" }, helpers);
+      expect(String(mockQuery.mock.calls[1][0])).toContain('"lyricsWordTimings" = $8::jsonb');
+      expect(mockQuery.mock.calls[1][1][7]).toBeNull();
+    });
+
+    it("replaces word timings together with a fresh LRC", async () => {
+      mockEnabled.mockReturnValue(true);
+      mockQuery.mockResolvedValueOnce({ rows: [vocalsRow] });
+      mockFetchLyrics.mockResolvedValueOnce(synced);
+      mockAddTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => ({ lyrics, words: [heardWord("a", 1.2, 1.7)] }));
+      await refetchLyrics({ songId: "s1" }, helpers);
+      expect(mockQuery.mock.calls[1][1][1]).toBe(synced.syncedLyrics);
+      expect(savedTimings(mockQuery.mock.calls[1][1][7])).toEqual([{ start: 1, end: 1.7, words: [{ text: "a", start: 1.2, end: 1.7 }] }]);
+    });
+
+    it("gives kept stored lyrics word timings when Find lyrics again finds nothing better", async () => {
+      mockEnabled.mockReturnValue(true);
+      mockQuery.mockResolvedValueOnce({ rows: [vocalsRow] });
+      mockFetchLyrics.mockResolvedValueOnce(notFound);
+      mockAddTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => ({ lyrics, words: [heardWord("old", 1.1, 1.5)] }));
+      await refetchLyrics({ songId: "s1" }, helpers);
+      const update = textUpdate()!;
+      expect(update[1].slice(0, 5)).toEqual(["s1", "[00:01.00]old", "old", "[00:01.00]old", "old"]);
+      expect(savedTimings(update[1][5])).toEqual([{ start: 1, end: 1.5, words: [{ text: "old", start: 1.1, end: 1.5 }] }]);
+      expect(mockNotify).toHaveBeenCalledOnce();
+    });
+
+    it("writes nothing for kept lyrics when the transcript times no line", async () => {
+      mockEnabled.mockReturnValue(true);
+      mockQuery.mockResolvedValueOnce({ rows: [vocalsRow] });
+      mockFetchLyrics.mockResolvedValueOnce(notFound);
+      mockAddTimed.mockImplementationOnce(async (_song, lyrics: LyricsResult) => ({ lyrics, words: [heardWord("unrelated", 30, 31)] }));
+      await refetchLyrics({ songId: "s1" }, helpers);
       expect(mockQuery).toHaveBeenCalledTimes(1);
       expect(mockNotify).not.toHaveBeenCalled();
     });
@@ -222,3 +277,11 @@ const whisperResult: LyricsResult = {
   missReason: null,
   matchedQuery: null,
 };
+
+function heardWord(text: string, start: number, end: number) {
+  return { text: ` ${text}`, start, end, probability: 0.9 };
+}
+
+function savedTimings(value: unknown): unknown {
+  return typeof value === "string" ? JSON.parse(value) : value;
+}

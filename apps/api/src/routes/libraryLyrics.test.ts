@@ -1,9 +1,11 @@
 // Host lyrics routes in library.ts against a mocked song table, host check and job queue.
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const SONG = "00000000-0000-4000-8000-0000000000a1";
+const STORED_TIMINGS = [{ start: 1, end: 2, words: [{ text: "old", start: 1, end: 1.8 }] }];
 
 const { state, enqueueRefetchLyrics, notify } = vi.hoisted(() => ({
   state: {
@@ -63,7 +65,7 @@ async function paste(text: unknown, songId = SONG) {
 
 beforeEach(() => {
   state.isHost = true;
-  state.songs = new Map([[SONG, { id: SONG, lyricsLrc: "[00:01.00]old", lyricsPlain: "old", lyricsSource: "lrclib", lyricsMissReason: null, lyricsOffsetMs: 0 }]]);
+  state.songs = new Map([[SONG, { id: SONG, lyricsLrc: "[00:01.00]old", lyricsPlain: "old", lyricsWordTimings: STORED_TIMINGS, lyricsSource: "lrclib", lyricsMissReason: null, lyricsOffsetMs: 0 }]]);
   enqueueRefetchLyrics.mockClear();
   notify.mockClear();
 });
@@ -75,6 +77,7 @@ describe("POST /api/songs/:songId/lyrics/manual", () => {
     expect(state.songs.get(SONG)).toMatchObject({
       lyricsPlain: "שורה ראשונה\nשורה שנייה\n\nפזמון",
       lyricsLrc: null,
+      lyricsWordTimings: Prisma.DbNull,
       lyricsSource: "manual",
       lyricsMissReason: null,
     });
@@ -104,6 +107,20 @@ describe("lyrics source and refetch missing", () => {
     const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/api/songs/${SONG}/lyrics` });
     expect(res.json()).toMatchObject({ source: "lrclib", lrc: "[00:01.00]old" });
+  });
+
+  it("returns stored word timings beside the LRC text", async () => {
+    const app = await buildApp();
+    const res = await app.inject({ method: "GET", url: `/api/songs/${SONG}/lyrics` });
+    expect(res.json().wordTimings).toEqual(STORED_TIMINGS);
+  });
+
+  it("returns no word timings when they are malformed or the song has no synced lyrics", async () => {
+    const app = await buildApp();
+    state.songs.get(SONG)!.lyricsWordTimings = [{ start: 2, end: 1, words: [] }];
+    expect((await app.inject({ method: "GET", url: `/api/songs/${SONG}/lyrics` })).json().wordTimings).toBeNull();
+    Object.assign(state.songs.get(SONG)!, { lyricsLrc: null, lyricsWordTimings: STORED_TIMINGS });
+    expect((await app.inject({ method: "GET", url: `/api/songs/${SONG}/lyrics` })).json().wordTimings).toBeNull();
   });
 
   it("refetches every song without synced lyrics", async () => {

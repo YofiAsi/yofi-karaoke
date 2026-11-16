@@ -83,7 +83,7 @@ function ResumeAutoScrollChip({ onResume }: { onResume: () => void }) {
   );
 }
 
-function AutoLyricsLabel() {
+export function AutoLyricsLabel() {
   return (
     <p dir="rtl" className="shrink-0 px-1 pt-1 text-xs text-neutral-500 text-start">
       מילים אוטומטיות

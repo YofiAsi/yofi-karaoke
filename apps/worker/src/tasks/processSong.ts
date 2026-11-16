@@ -6,8 +6,8 @@ import { pool, notify } from "../db.js";
 import { env } from "../env.js";
 import { downloadYouTubeAudio } from "../steps/download.js";
 import { prewarmSeparation, separateVocals, type SeparateResult } from "../steps/separate.js";
-import { fetchLyrics, type LyricsLogger, type LyricsResult } from "../steps/lyrics.js";
-import { addTimedLyrics, planTimedLyrics, transcriptionEnabled } from "../steps/timedLyrics.js";
+import { fetchLyrics, type LyricsLogger } from "../steps/lyrics.js";
+import { addTimedLyrics, transcriptionEnabled, wordTimingsFor } from "../steps/timedLyrics.js";
 import { romanizeLyrics } from "../steps/romaji.js";
 import { songPriority } from "../gpu/index.js";
 import { withSongLock } from "../songLock.js";
@@ -128,8 +128,17 @@ async function bothOrFirstError<A, B>(a: Promise<A>, b: Promise<B>): Promise<[A,
   return [first.value, second.value];
 }
 
-function willAddTimedLyrics(found: LyricsResult): boolean {
-  return transcriptionEnabled() && planTimedLyrics(found) !== "skip";
+function willTranscribe(stems: SeparateResult): boolean {
+  return transcriptionEnabled() && stems.vocalsPath !== null;
+}
+
+function timedSync<T>(stages: StageTimes, name: string, work: () => T): T {
+  const started = Date.now();
+  try {
+    return work();
+  } finally {
+    stages[name] = Date.now() - started;
+  }
 }
 
 function describeSeparation(stems: SeparateResult): string {
@@ -158,14 +167,15 @@ async function runPipeline(songId: string, workDir: string, helpers: JobHelpers)
 
   await reportProgress(songId, "fetching_lyrics", 80);
   const found = await timed(stages, "lyricsWaitMs", () => lookup);
-  if (willAddTimedLyrics(found)) await reportProgress(songId, "fetching_lyrics", 90);
+  if (willTranscribe(stems)) await reportProgress(songId, "fetching_lyrics", 90);
   const [timedLyrics, { instrumentalKey, vocalsKey }] = await bothOrFirstError(
     timed(stages, "timedLyricsMs", () => addTimedLyrics(song, found, stems.vocalsPath, log, priority)),
     timed(stages, "uploadMs", () => uploadStems(songId, stems)),
   );
-  const lyrics = await timed(stages, "romajiMs", () => romanizeLyrics(timedLyrics, log));
+  const lyrics = await timed(stages, "romajiMs", () => romanizeLyrics(timedLyrics.lyrics, log));
+  const wordTimings = timedSync(stages, "wordTimingsMs", () => wordTimingsFor(lyrics, timedLyrics, song.durationSeconds, log));
 
-  await saveLyrics(songId, lyrics);
+  await saveLyrics(songId, lyrics, wordTimings);
   await pool.query(
     `UPDATE "Song" SET "instrumentalObjectKey" = $2, "vocalsObjectKey" = $3 WHERE id = $1`,
     [songId, instrumentalKey, vocalsKey],
