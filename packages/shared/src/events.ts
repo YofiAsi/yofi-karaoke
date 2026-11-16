@@ -33,6 +33,7 @@ export interface SongProgressEvent {
 export interface PlaybackStateEvent extends PlaybackStateView {}
 
 export interface PlaybackTickEvent {
+  queueItemId: string;
   positionSeconds: number;
 }
 

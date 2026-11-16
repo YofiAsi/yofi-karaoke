@@ -53,6 +53,8 @@ const { db, resetDb } = vi.hoisted(() => {
       findFirst: async ({ where, orderBy }: { where?: Where; orderBy?: OrderBy }) =>
         findItems(where, orderBy)[0] ?? null,
       findUnique: async ({ where }: { where: Where }) => findItems(where)[0] ?? null,
+      findMany: async ({ where, orderBy, take }: { where?: Where; orderBy?: OrderBy; take?: number }) =>
+        findItems(where, orderBy).slice(0, take),
       update: async ({ where, data }: { where: Where; data: Row }) =>
         Object.assign(findItems(where)[0]!, data),
       updateMany: async ({ where, data }: { where: Where; data: Row }) => {
@@ -76,7 +78,12 @@ const { db, resetDb } = vi.hoisted(() => {
 
   function resetDb(currentQueueItemId: string | null, items: Row[]): void {
     tables.playback = { id: 1, currentQueueItemId, positionSeconds: 42, isPlaying: true };
-    tables.items = items.map((i, index) => ({ createdAt: new Date(index), playedAt: null, ...i }));
+    tables.items = items.map((i, index) => ({
+      createdAt: new Date(index),
+      playedAt: null,
+      songId: `song-${String(i.id)}`,
+      ...i,
+    }));
   }
 
   return { db, resetDb };
@@ -84,9 +91,10 @@ const { db, resetDb } = vi.hoisted(() => {
 
 vi.mock("../db.js", () => ({ prisma: db }));
 
-import { advance, play, rewind } from "./transitions.js";
+import { advance, play, recordPosition, rewind } from "./transitions.js";
 
 const A = "00000000-0000-4000-8000-00000000000a";
+const A2 = "00000000-0000-4000-8000-0000000000a2";
 const B = "00000000-0000-4000-8000-00000000000b";
 const C = "00000000-0000-4000-8000-00000000000c";
 
@@ -197,5 +205,43 @@ describe("rewind", () => {
     resetDb(B, [{ id: A, state: "played", position: 1, playedAt: new Date(1000) }]);
     expect(await rewind(C)).toEqual({ changed: false, currentQueueItemId: B });
     expect(stateOf(A)).toBe("played");
+  });
+
+  it("plays the ready copy when the previous song was queued again", async () => {
+    resetDb(B, [
+      { id: A, songId: "song-a", state: "played", position: 1, playedAt: new Date(1000) },
+      { id: B, state: "ready", position: 2 },
+      { id: A2, songId: "song-a", state: "ready", position: 3 },
+    ]);
+    expect(await rewind(B)).toEqual({ changed: true, currentQueueItemId: A2 });
+    expect(stateOf(A)).toBe("played");
+    expect(stateOf(A2)).toBe("ready");
+  });
+
+  it("falls back to an older played song when the queued copy is not ready yet", async () => {
+    resetDb(B, [
+      { id: C, state: "played", position: 0, playedAt: new Date(10) },
+      { id: A, songId: "song-a", state: "played", position: 1, playedAt: new Date(1000) },
+      { id: B, state: "ready", position: 2 },
+      { id: A2, songId: "song-a", state: "processing", position: 3 },
+    ]);
+    expect(await rewind(B)).toEqual({ changed: true, currentQueueItemId: C });
+    expect(stateOf(A)).toBe("played");
+    expect(stateOf(C)).toBe("ready");
+  });
+});
+
+describe("recordPosition", () => {
+  it("stores the position for the current item", async () => {
+    resetDb(A, [{ id: A, state: "ready", position: 1 }]);
+    expect(await recordPosition(A, 12)).toBe(true);
+    expect(db.tables.playback.positionSeconds).toBe(12);
+  });
+
+  it("ignores a late report for an item that is no longer current", async () => {
+    resetDb(A, [{ id: A, state: "ready", position: 1 }]);
+    await advance(A);
+    expect(await recordPosition(A, 180)).toBe(false);
+    expect(db.tables.playback.positionSeconds).toBe(0);
   });
 });

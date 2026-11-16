@@ -12,6 +12,7 @@ import type {
 import { api } from "@/lib/api";
 import { loadStoredUser, validateStoredUser } from "@/lib/user";
 import { isCurrentHost, isPlayerDevice } from "@/lib/roles";
+import { withTick } from "@/lib/playbackTick";
 import { useSocket } from "@/lib/socket";
 import { parseLrc, type LrcLine } from "@/lib/lrc";
 import { PlayerToggle } from "@/components/PlayerToggle";
@@ -34,6 +35,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const [user, setUser] = useState(() => loadStoredUser());
   const [queue, setQueue] = useState<QueueView | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackStateView | null>(null);
+  const [lastTick, setLastTick] = useState<PlaybackTickEvent | null>(null);
   const [progress, setProgress] = useState<Map<string, SongProgressEvent>>(() => new Map());
   const [lrcLines, setLrcLines] = useState<LrcLine[]>([]);
   const [plainLyrics, setPlainLyrics] = useState<string | null>(null);
@@ -66,6 +68,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const fetchPlaybackState = useCallback(async () => {
     try {
       setPlaybackState(await api.get<PlaybackStateView>("/api/playback"));
+      setLastTick(null);
     } catch { /* ignore */ }
   }, []);
 
@@ -78,7 +81,10 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       fetchQueue();
       setLyricsVersion((v) => v + 1);
     }
-    function onPlaybackState(data: PlaybackStateView) { setPlaybackState(data); }
+    function onPlaybackState(data: PlaybackStateView) {
+      setPlaybackState(data);
+      setLastTick(null);
+    }
     function onSongProgress(data: SongProgressEvent) {
       setProgress((prev) => {
         const next = new Map(prev);
@@ -92,9 +98,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       fetchPlaybackState();
     }
     function onPlaybackTick(data: PlaybackTickEvent) {
-      setPlaybackState((prev) =>
-        prev ? { ...prev, positionSeconds: data.positionSeconds } : prev
-      );
+      setLastTick(data);
     }
 
     socket.on("queue:updated", onQueueUpdated);
@@ -118,6 +122,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
 
   const isHost = isCurrentHost(user, playbackState);
   const isPlayer = isPlayerDevice(user, playbackState);
+  const displayedPlayback = withTick(playbackState, lastTick);
 
   useEffect(() => {
     if (!isHost) return;
@@ -163,7 +168,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         user,
         isHost,
         queue,
-        playbackState,
+        playbackState: displayedPlayback,
         progress,
         lrcLines,
         plainLyrics,

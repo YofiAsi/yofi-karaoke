@@ -12,21 +12,41 @@ export interface PositionedItem {
   position: number;
 }
 
-export type SwapPlan =
+export type MovePlan =
   | { kind: "missing" }
   | { kind: "edge" }
-  | { kind: "swap"; moving: PositionedItem; neighbor: PositionedItem };
+  | { kind: "reorder"; updates: PositionedItem[] };
 
-export function planSwap(
+function swapAt<T>(list: T[], a: number, b: number): T[] {
+  const copy = [...list];
+  [copy[a], copy[b]] = [copy[b]!, copy[a]!];
+  return copy;
+}
+
+function strictlyAscending(positions: number[]): number[] {
+  const slots: number[] = [];
+  for (const position of positions) {
+    const previous = slots[slots.length - 1];
+    slots.push(previous !== undefined && position <= previous ? previous + 1 : position);
+  }
+  return slots;
+}
+
+export function planMove(
   upcoming: PositionedItem[],
   queueItemId: string,
   direction: MoveDirection,
-): SwapPlan {
+): MovePlan {
   const index = upcoming.findIndex((i) => i.id === queueItemId);
   if (index === -1) return { kind: "missing" };
-  const neighbor = upcoming[direction === "up" ? index - 1 : index + 1];
-  if (!neighbor) return { kind: "edge" };
-  return { kind: "swap", moving: upcoming[index]!, neighbor };
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (target < 0 || target >= upcoming.length) return { kind: "edge" };
+  const reordered = swapAt(upcoming, index, target);
+  const slots = strictlyAscending(upcoming.map((i) => i.position));
+  const updates = reordered
+    .map((item, i) => ({ id: item.id, position: slots[i]! }))
+    .filter((update, i) => update.position !== reordered[i]!.position);
+  return { kind: "reorder", updates };
 }
 
 export async function removeQueueItem(actor: Actor, queueItemId: string): Promise<void> {
@@ -54,11 +74,12 @@ export async function moveQueueItem(
       orderBy: [{ position: "asc" }, { createdAt: "asc" }],
       select: { id: true, position: true },
     });
-    const plan = planSwap(upcoming, queueItemId, direction);
+    const plan = planMove(upcoming, queueItemId, direction);
     if (plan.kind === "missing") throw httpError(409, "not_upcoming");
     if (plan.kind === "edge") return false;
-    await tx.queueItem.update({ where: { id: plan.moving.id }, data: { position: plan.neighbor.position } });
-    await tx.queueItem.update({ where: { id: plan.neighbor.id }, data: { position: plan.moving.position } });
+    for (const update of plan.updates) {
+      await tx.queueItem.update({ where: { id: update.id }, data: { position: update.position } });
+    }
     return true;
   });
 }

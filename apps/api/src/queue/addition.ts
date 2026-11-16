@@ -1,12 +1,14 @@
 // Adding songs to the queue, reviving failed items, and starting song processing.
-import { QueueState, type QueueItem, type Song } from "@prisma/client";
+import { Prisma, QueueState, type QueueItem, type Song } from "@prisma/client";
 import { prisma } from "../db.js";
+import { lockPlaybackState } from "../playback/transitions.js";
 import { pickTrackMetadata, ytdlpInfo } from "../ytdlp.js";
 import { isYtVideoUnavailableMessage } from "../ytdlp/isVideoUnavailable.js";
 import { enqueueProcessSong } from "../jobs/enqueueProcessSong.js";
 import { asAlreadyQueued, httpError, isUniqueViolation } from "./httpError.js";
 
 type SongReadiness = Pick<Song, "instrumentalObjectKey">;
+type Db = Prisma.TransactionClient;
 
 export const ACTIVE_QUEUE_STATES: QueueState[] = [
   QueueState.queued,
@@ -30,9 +32,18 @@ export function needsProcessingJob(song: SongReadiness, hasOpenJob: boolean): bo
   return !isProcessed(song) && !hasOpenJob;
 }
 
-export async function nextPosition(): Promise<number> {
-  const agg = await prisma.queueItem.aggregate({ _max: { position: true } });
+export async function nextPosition(db: Db = prisma): Promise<number> {
+  const agg = await db.queueItem.aggregate({ _max: { position: true } });
   return (agg._max.position ?? 0) + 1;
+}
+
+async function withQueueLock<T>(work: (tx: Db) => Promise<T>): Promise<T> {
+  return asAlreadyQueued(() =>
+    prisma.$transaction(async (tx) => {
+      await lockPlaybackState(tx);
+      return work(tx);
+    }),
+  );
 }
 
 async function fetchVideoInfo(youtubeVideoId: string) {
@@ -77,25 +88,39 @@ async function rejectIfActive(songId: string, exceptId?: string): Promise<void> 
   if (active) throw httpError(409, "already_queued");
 }
 
-export async function reviveFailedItem(item: QueueItem, song: Song): Promise<QueueItem> {
-  await rejectIfActive(song.id, item.id);
+async function revivalChanges(tx: Db, song: Song, newRequesterId?: string) {
   const state = revivedItemState(song);
-  const { count } = await asAlreadyQueued(() =>
-    prisma.queueItem.updateMany({
+  if (!newRequesterId) return { state };
+  return { state, requestedByUserId: newRequesterId, position: await nextPosition(tx) };
+}
+
+export async function reviveFailedItem(
+  item: QueueItem,
+  song: Song,
+  newRequesterId?: string,
+): Promise<QueueItem> {
+  await rejectIfActive(song.id, item.id);
+  return withQueueLock(async (tx) => {
+    const data = await revivalChanges(tx, song, newRequesterId);
+    const { count } = await tx.queueItem.updateMany({
       where: { id: item.id, state: QueueState.failed },
-      data: { state },
-    }),
-  );
-  if (count === 0) throw httpError(409, "already_queued");
-  return { ...item, state };
+      data,
+    });
+    if (count === 0) throw httpError(409, "already_queued");
+    return { ...item, ...data };
+  });
 }
 
 async function createQueueItem(song: Song, userId: string): Promise<QueueItem> {
   await rejectIfActive(song.id);
-  const position = await nextPosition();
-  return asAlreadyQueued(() =>
-    prisma.queueItem.create({
-      data: { songId: song.id, requestedByUserId: userId, position, state: newItemState(song) },
+  return withQueueLock(async (tx) =>
+    tx.queueItem.create({
+      data: {
+        songId: song.id,
+        requestedByUserId: userId,
+        position: await nextPosition(tx),
+        state: newItemState(song),
+      },
     }),
   );
 }
@@ -126,7 +151,9 @@ export async function ensureProcessing(song: Song): Promise<void> {
 
 export async function queueSong(song: Song, userId: string): Promise<QueueItem> {
   const failed = await latestFailedItem(song.id);
-  const item = failed ? await reviveFailedItem(failed, song) : await createQueueItem(song, userId);
+  const item = failed
+    ? await reviveFailedItem(failed, song, userId)
+    : await createQueueItem(song, userId);
   await ensureProcessing(song);
   return item;
 }

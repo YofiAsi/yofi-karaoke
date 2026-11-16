@@ -1,24 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma, type Song } from "@prisma/client";
 
-const { mockPrisma, enqueueProcessSong, ytdlpInfo } = vi.hoisted(() => ({
-  mockPrisma: {
+const { mockPrisma, enqueueProcessSong, ytdlpInfo, events } = vi.hoisted(() => {
+  const events: string[] = [];
+  const mockPrisma = {
     song: { findUnique: vi.fn(), upsert: vi.fn(), findUniqueOrThrow: vi.fn() },
     queueItem: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn(), aggregate: vi.fn() },
     processingJob: { findFirst: vi.fn(), deleteMany: vi.fn(), create: vi.fn() },
-    $transaction: vi.fn(async (ops: unknown[]) => ops),
-  },
-  enqueueProcessSong: vi.fn(),
-  ytdlpInfo: vi.fn(),
-}));
+    $queryRaw: vi.fn(async () => {
+      events.push("lock");
+      return [{ currentQueueItemId: null }];
+    }),
+    $transaction: vi.fn(async (arg: unknown): Promise<unknown> =>
+      typeof arg === "function" ? arg(mockPrisma) : arg,
+    ),
+  };
+  return { mockPrisma, enqueueProcessSong: vi.fn(), ytdlpInfo: vi.fn(), events };
+});
 
 vi.mock("../db.js", () => ({ prisma: mockPrisma }));
 vi.mock("../jobs/enqueueProcessSong.js", () => ({ enqueueProcessSong }));
 vi.mock("../ytdlp.js", () => ({ ytdlpInfo, pickTrackMetadata: () => ({}) }));
 
-import { findOrCreateSong, nextPosition, queueSong } from "./addition.js";
+import { findOrCreateSong, nextPosition, queueSong, reviveFailedItem } from "./addition.js";
 
 const USER_ID = "00000000-0000-4000-8000-0000000000u1";
+const ALICE_ID = "00000000-0000-4000-8000-0000000000a1";
 const FAILED_ITEM = {
   id: "00000000-0000-4000-8000-00000000000f",
   songId: "song-1",
@@ -42,28 +49,46 @@ function givenQueue({ failed = null as unknown, active = null as unknown, openJo
     where.state === "failed" ? failed : active,
   );
   mockPrisma.processingJob.findFirst.mockResolvedValue(openJob);
-  mockPrisma.queueItem.aggregate.mockResolvedValue({ _max: { position: 7 } });
+  mockPrisma.queueItem.aggregate.mockImplementation(async () => {
+    events.push("position");
+    return { _max: { position: 7 } };
+  });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  events.length = 0;
 });
 
 describe("queueSong after a failure", () => {
-  it("returns the failed item to queued and enqueues processing again", async () => {
-    givenQueue({ failed: FAILED_ITEM });
+  it("hands the failed item to the new requester at the end of the queue and enqueues again", async () => {
+    givenQueue({ failed: { ...FAILED_ITEM, requestedByUserId: ALICE_ID } });
     mockPrisma.queueItem.updateMany.mockResolvedValue({ count: 1 });
 
     const item = await queueSong(song(), USER_ID);
 
-    expect(item).toMatchObject({ id: FAILED_ITEM.id, state: "queued", position: 4 });
+    expect(item).toMatchObject({ id: FAILED_ITEM.id, state: "queued", position: 8, requestedByUserId: USER_ID });
+    expect(mockPrisma.queueItem.updateMany).toHaveBeenCalledWith({
+      where: { id: FAILED_ITEM.id, state: "failed" },
+      data: { state: "queued", requestedByUserId: USER_ID, position: 8 },
+    });
+    expect(events).toEqual(["lock", "position"]);
+    expect(mockPrisma.queueItem.create).not.toHaveBeenCalled();
+    expect(mockPrisma.processingJob.create).toHaveBeenCalled();
+    expect(enqueueProcessSong).toHaveBeenCalledWith("song-1");
+  });
+
+  it("keeps requester and position when the failed item is retried", async () => {
+    givenQueue({});
+    mockPrisma.queueItem.updateMany.mockResolvedValue({ count: 1 });
+
+    const item = await reviveFailedItem({ ...FAILED_ITEM, requestedByUserId: ALICE_ID } as never, song());
+
+    expect(item).toMatchObject({ state: "queued", position: 4, requestedByUserId: ALICE_ID });
     expect(mockPrisma.queueItem.updateMany).toHaveBeenCalledWith({
       where: { id: FAILED_ITEM.id, state: "failed" },
       data: { state: "queued" },
     });
-    expect(mockPrisma.queueItem.create).not.toHaveBeenCalled();
-    expect(mockPrisma.processingJob.create).toHaveBeenCalled();
-    expect(enqueueProcessSong).toHaveBeenCalledWith("song-1");
   });
 
   it("revives straight to ready when the song was processed meanwhile", async () => {
@@ -93,6 +118,7 @@ describe("queueSong for a new item", () => {
     const item = await queueSong(song(), USER_ID);
 
     expect(item).toMatchObject({ state: "processing", position: 8 });
+    expect(events).toEqual(["lock", "position"]);
     expect(enqueueProcessSong).toHaveBeenCalledTimes(1);
   });
 
