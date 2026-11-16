@@ -203,6 +203,45 @@ describe('parseLrc', () => {
     });
   });
 
+  describe('loose timestamp formats', () => {
+    it('should accept single digit minutes without fraction', () => {
+      expect(parseLrc('[1:05]Hello')).toEqual([{ time: 65, text: 'Hello' }]);
+    });
+
+    it('should accept one, two and three fraction digits', () => {
+      const result = parseLrc(`[00:01.5]a
+[00:02.25]b
+[00:03.125]c`);
+      expect(result.map((l) => l.time)).toEqual([1.5, 2.25, 3.125]);
+    });
+
+    it('should accept a colon before hundredths', () => {
+      expect(parseLrc('[00:12:34]Colon')).toEqual([{ time: 12.34, text: 'Colon' }]);
+    });
+
+    it('should expand multiple timestamps on one line', () => {
+      const result = parseLrc(`[00:10.00][01:10.00]Chorus
+[00:30.00]Verse`);
+      expect(result).toEqual([
+        { time: 10, text: 'Chorus' },
+        { time: 30, text: 'Verse' },
+        { time: 70, text: 'Chorus' },
+      ]);
+    });
+
+    it('should handle CRLF line endings and Hebrew text', () => {
+      const result = parseLrc('[00:01.00]שלום עולם\r\n[00:02.00]שורה שנייה\r\n');
+      expect(result).toEqual([
+        { time: 1, text: 'שלום עולם' },
+        { time: 2, text: 'שורה שנייה' },
+      ]);
+    });
+
+    it('should still skip metadata such as offset and length tags', () => {
+      expect(parseLrc('[offset:+500]\n[length:03:20]\n[00:05.00]Go')).toEqual([{ time: 5, text: 'Go' }]);
+    });
+  });
+
   describe('interface compliance', () => {
     it('should return array of LrcLine objects with correct types', () => {
       const lrc = '[00:10.00]Test';

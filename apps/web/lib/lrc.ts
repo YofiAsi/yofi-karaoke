@@ -1,74 +1,33 @@
-/**
- * LRC file format parser
- * Parses LRC lyrics format with timestamps
- *
- * Format: [mm:ss.xx]Lyric text
- * - mm: minutes (00-99)
- * - ss: seconds (00-59)
- * - xx: hundredths of a second (00-99)
- *
- * May also contain word-level timestamps in the format:
- * [00:12.34]<00:12.34>Word1 <00:12.78>Word2
- */
+// LRC parser: accepts [m:ss], [mm:ss.x] to [mm:ss.xxx], [mm:ss:xx] and repeated timestamps per line.
 
 export interface LrcLine {
-  time: number; // time in seconds from start (e.g., 72.34)
-  text: string; // lyric text, stripped of <word-level> tags
+  time: number;
+  text: string;
 }
 
-/**
- * Parse LRC format string into structured lyric lines
- *
- * @param lrc - LRC format string (or null/undefined for empty content)
- * @returns Array of parsed LRC lines sorted by time ascending
- *
- * Rules:
- * - Lines matching [mm:ss.xx] pattern are lyric lines
- * - Lines not matching pattern (metadata, empty) are skipped
- * - Time is converted to seconds: mm * 60 + ss + xx/100
- * - Word-level tags <...> are stripped from text
- * - Results are sorted by time ascending
- */
+const LEADING_TIMESTAMPS = /^(?:\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\])+/;
+const TIMESTAMP = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+const WORD_TIMESTAMP = /<[\d:.]+>/g;
+
 export function parseLrc(lrc: string | null | undefined): LrcLine[] {
-  if (!lrc) {
-    return [];
-  }
+  if (!lrc) return [];
+  const lines = lrc.split(/\r?\n/).flatMap(parseLine);
+  return lines.sort((a, b) => a.time - b.time);
+}
 
-  const lines: LrcLine[] = [];
+function parseLine(rawLine: string): LrcLine[] {
+  const line = rawLine.trim();
+  const prefix = line.match(LEADING_TIMESTAMPS)?.[0];
+  if (!prefix) return [];
+  const text = line.slice(prefix.length).replace(WORD_TIMESTAMP, "");
+  return [...prefix.matchAll(TIMESTAMP)].map((m) => ({ time: toSeconds(m[1], m[2], m[3]), text }));
+}
 
-  // Pattern to match [mm:ss.xx] at the start of a line
-  // Captures: mm (minutes), ss (seconds), xx (hundredths)
-  const timestampPattern = /^\[(\d{2}):(\d{2})\.(\d{2})\](.*)$/;
+function toSeconds(minutes: string, seconds: string, fraction: string | undefined): number {
+  const fractional = fraction ? Number(fraction) / 10 ** fraction.length : 0;
+  return roundMs(Number(minutes) * 60 + Number(seconds) + fractional);
+}
 
-  const lrcLines = lrc.split('\n');
-
-  for (const line of lrcLines) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue; // Skip empty lines
-    }
-
-    const match = trimmed.match(timestampPattern);
-    if (!match) {
-      continue; // Skip lines without timestamp pattern (e.g., metadata)
-    }
-
-    const mm = parseInt(match[1], 10);
-    const ss = parseInt(match[2], 10);
-    const xx = parseInt(match[3], 10);
-    let text = match[4];
-
-    // Convert to seconds
-    const time = mm * 60 + ss + xx / 100;
-
-    // Strip word-level timestamp tags <mm:ss.xx>
-    text = text.replace(/<[\d:\.]+>/g, '');
-
-    lines.push({ time, text });
-  }
-
-  // Sort by time ascending
-  lines.sort((a, b) => a.time - b.time);
-
-  return lines;
+function roundMs(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
