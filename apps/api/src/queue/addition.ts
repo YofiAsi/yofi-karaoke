@@ -93,20 +93,26 @@ export function exceedsQueueLimit(activeCount: number, limit: number, isHost: bo
   return !isHost && activeCount >= limit;
 }
 
-async function rejectIfOverLimit(tx: Db, userId: string): Promise<void> {
+async function isCurrentHostUser(tx: Db, userId: string): Promise<boolean> {
   const user = await tx.user.findUnique({ where: { id: userId }, select: { isHost: true } });
+  const playback = await tx.playbackState.findUnique({ where: { id: 1 }, select: { hostUserId: true } });
+  return !!user?.isHost && playback?.hostUserId === userId;
+}
+
+async function rejectIfOverLimit(tx: Db, userId: string): Promise<void> {
   const activeCount = await tx.queueItem.count({
     where: { requestedByUserId: userId, state: { in: ACTIVE_QUEUE_STATES } },
   });
-  if (exceedsQueueLimit(activeCount, env.MAX_ACTIVE_ITEMS_PER_USER, !!user?.isHost)) {
+  const isHost = await isCurrentHostUser(tx, userId);
+  if (exceedsQueueLimit(activeCount, env.MAX_ACTIVE_ITEMS_PER_USER, isHost)) {
     throw httpError(409, "queue_limit");
   }
 }
 
-async function revivalChanges(tx: Db, song: Song, newRequesterId?: string) {
+async function revivalChanges(tx: Db, item: QueueItem, song: Song, newRequesterId?: string) {
   const state = revivedItemState(song);
+  await rejectIfOverLimit(tx, newRequesterId ?? item.requestedByUserId);
   if (!newRequesterId) return { state };
-  await rejectIfOverLimit(tx, newRequesterId);
   return { state, requestedByUserId: newRequesterId, position: await nextPosition(tx) };
 }
 
@@ -117,7 +123,7 @@ export async function reviveFailedItem(
 ): Promise<QueueItem> {
   await rejectIfActive(song.id, item.id);
   return withQueueLock(async (tx) => {
-    const data = await revivalChanges(tx, song, newRequesterId);
+    const data = await revivalChanges(tx, item, song, newRequesterId);
     const { count } = await tx.queueItem.updateMany({
       where: { id: item.id, state: QueueState.failed },
       data,
