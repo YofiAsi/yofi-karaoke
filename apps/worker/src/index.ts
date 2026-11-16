@@ -1,6 +1,7 @@
 import { run } from "graphile-worker";
 import { env } from "./env.js";
 import { processSong } from "./tasks/processSong.js";
+import { refetchLyrics } from "./tasks/refetchLyrics.js";
 
 async function main(): Promise<void> {
   const runner = await run({
@@ -10,6 +11,7 @@ async function main(): Promise<void> {
     pollInterval: 1_000,
     taskList: {
       process_song: processSong,
+      refetch_lyrics: refetchLyrics,
     },
   });
 

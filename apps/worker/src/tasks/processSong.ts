@@ -7,6 +7,7 @@ import { downloadYouTubeAudio } from "../steps/download.js";
 import { separateVocals } from "../steps/separate.js";
 import { fetchLyrics } from "../steps/lyrics.js";
 import { uploadInstrumental } from "../minioUpload.js";
+import { saveLyrics } from "./refetchLyrics.js";
 import {
   PgNotifyChannels,
   type SongProgressEvent,
@@ -92,12 +93,14 @@ interface SongRow {
   youtubeVideoId: string;
   title: string;
   artist: string;
+  track: string | null;
+  trackArtist: string | null;
   durationSeconds: number;
 }
 
 async function loadSong(songId: string): Promise<SongRow> {
   const { rows } = await pool.query<SongRow>(
-    `SELECT id, "youtubeVideoId", title, artist, "durationSeconds"
+    `SELECT id, "youtubeVideoId", title, artist, track, "trackArtist", "durationSeconds"
      FROM "Song" WHERE id = $1`,
     [songId],
   );
@@ -123,22 +126,14 @@ export const processSong: Task = async (payload, helpers) => {
     helpers.logger.info(`separate.py wall=${wallMs}ms`);
 
     await reportProgress(songId, "fetching_lyrics", 80);
-    const lyrics = await fetchLyrics({
-      title: song.title,
-      artist: song.artist,
-      durationSeconds: song.durationSeconds,
-    });
+    const lyrics = await fetchLyrics(song, (msg) => helpers.logger.info(`processSong ${songId} ${msg}`));
 
     const instrumentalKey = await uploadInstrumental(songId, instrumentalPath);
 
+    await saveLyrics(songId, lyrics);
     await pool.query(
-      `UPDATE "Song"
-         SET "instrumentalObjectKey" = $2,
-             "lyricsLrc"   = $3,
-             "lyricsPlain" = $4,
-             "lyricsSource" = $5
-       WHERE id = $1`,
-      [songId, instrumentalKey, lyrics.syncedLyrics, lyrics.plainLyrics, lyrics.source],
+      `UPDATE "Song" SET "instrumentalObjectKey" = $2 WHERE id = $1`,
+      [songId, instrumentalKey],
     );
 
     await markQueueItemsReady(songId);
