@@ -8,17 +8,21 @@ interface LyricsViewProps {
   positionSeconds: number;
   plainText?: string;
   expandToFill?: boolean;
+  offsetMs?: number;
 }
+
+const LOOKAHEAD_SECONDS = 0.3;
 
 export function LyricsView({
   lines,
   positionSeconds,
   plainText,
   expandToFill,
+  offsetMs = 0,
 }: LyricsViewProps) {
   const activeRef = useRef<HTMLParagraphElement>(null);
 
-  const adjustedPosition = positionSeconds + 0.3;
+  const adjustedPosition = positionSeconds + LOOKAHEAD_SECONDS - offsetMs / 1000;
   let activeIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].time <= adjustedPosition) {
@@ -43,7 +47,7 @@ export function LyricsView({
     return (
       <div className={scrollAreaClass}>
         {plainLines.map((line, i) => (
-          <p key={i} className="text-2xl font-semibold leading-snug text-neutral-600">
+          <p key={i} dir="auto" className="text-2xl font-semibold leading-snug text-neutral-600 text-start">
             {line}
           </p>
         ))}
@@ -73,7 +77,8 @@ export function LyricsView({
         <p
           key={i}
           ref={i === activeIdx ? activeRef : undefined}
-          className={`${lineClass} ${
+          dir="auto"
+          className={`${lineClass} text-start ${
             i === activeIdx ? "text-white" : "text-neutral-600"
           }`}
         >

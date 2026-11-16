@@ -16,6 +16,17 @@ import { parseLrc, type LrcLine } from "@/lib/lrc";
 import { PlayerToggle } from "@/components/PlayerToggle";
 import { AppShellContext } from "./AppShellContext";
 
+interface LyricsResponse {
+  lrc: string | null;
+  plain: string | null;
+  offsetMs?: number;
+}
+
+function toLyricsState({ lrc, plain }: LyricsResponse) {
+  const lines = parseLrc(lrc);
+  return { lines, plain: plain ?? (lines.length === 0 ? lrc : null) };
+}
+
 export default function AppShellLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const socket = useSocket();
@@ -26,6 +37,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const [lrcLines, setLrcLines] = useState<LrcLine[]>([]);
   const [plainLyrics, setPlainLyrics] = useState<string | null>(null);
   const [audioPosition, setAudioPosition] = useState<number | null>(null);
+  const [lyricsVersion, setLyricsVersion] = useState(0);
 
   useEffect(() => {
     if (!user) {
@@ -50,7 +62,10 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     fetchQueue();
     fetchPlaybackState();
 
-    function onQueueUpdated() { fetchQueue(); }
+    function onQueueUpdated() {
+      fetchQueue();
+      setLyricsVersion((v) => v + 1);
+    }
     function onPlaybackState(data: PlaybackStateView) { setPlaybackState(data); }
     function onSongProgress(data: SongProgressEvent) {
       setProgress((prev) => {
@@ -100,16 +115,17 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       return;
     }
     api
-      .get<{ lrc: string | null; plain: string | null }>(`/api/songs/${currentSong.id}/lyrics`)
-      .then(({ lrc, plain }) => {
-        setLrcLines(parseLrc(lrc));
-        setPlainLyrics(lrc ? null : plain);
+      .get<LyricsResponse>(`/api/songs/${currentSong.id}/lyrics`)
+      .then((res) => {
+        const { lines, plain } = toLyricsState(res);
+        setLrcLines(lines);
+        setPlainLyrics(plain);
       })
       .catch(() => {
         setLrcLines([]);
         setPlainLyrics(null);
       });
-  }, [currentSong?.id, currentSong?.hasLyrics]);
+  }, [currentSong?.id, currentSong?.hasLyrics, lyricsVersion]);
 
   const current = queue?.current ?? null;
   const currentAudioKey = current?.song.hasInstrumental ? current.song.id : null;
