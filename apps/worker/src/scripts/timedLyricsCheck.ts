@@ -25,7 +25,8 @@ function stats(errors: number[]): string {
   const sorted = errors.map(Math.abs).sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];
   const within = (limit: number) => sorted.filter((e) => e <= limit).length;
-  return `n=${sorted.length} median=${median.toFixed(2)}s worst=${sorted[sorted.length - 1].toFixed(2)}s within0.5s=${within(0.5)} within1s=${within(1)}`;
+  const top = sorted.slice(-3).reverse().map((e) => e.toFixed(2)).join(",");
+  return `n=${sorted.length} median=${median.toFixed(2)}s worst3=${top}s within0.5s=${within(0.5)} within1s=${within(1)}`;
 }
 
 function lineTokenOwners(lines: TimedLine[]): { line: number; position: number }[] {
@@ -67,6 +68,24 @@ function compareAligned(reference: TimedLine[], words: TranscriptWord[]): void {
   console.log(`aligned line start error vs LRCLIB: ${stats(result.lines.map((line, i) => line.start - reference[i].start))}`);
 }
 
+function matchByText(aligned: TimedLine[], reference: TimedLine[]): number[] {
+  const errors: number[] = [];
+  let cursor = 0;
+  for (const line of aligned) {
+    const found = reference.findIndex((ref, i) => i >= cursor && ref.text.trim() === line.text.trim());
+    if (found < 0) continue;
+    errors.push(line.start - reference[found].start);
+    cursor = found + 1;
+  }
+  return errors;
+}
+
+function compareAlignedPlain(plain: string, reference: TimedLine[], words: TranscriptWord[]): void {
+  const result = alignLyrics(plain, words);
+  console.log(`LRCLIB plain alignment ok=${result.ok} matchRate=${(result.matchRate * 100).toFixed(1)}% anchored=${result.anchoredLines}`);
+  if (result.ok) console.log(`LRCLIB plain aligned start error vs LRCLIB synced: ${stats(matchByText(result.lines, reference))}`);
+}
+
 function main(): void {
   const transcript = JSON.parse(readFileSync(argValue("--transcript") ?? "", "utf8")) as Transcript;
   const lrc = readOptional(argValue("--lrc"));
@@ -79,6 +98,7 @@ function main(): void {
     const reference = parseLrcLines(lrc).filter((line) => tokenize(line.text).length > 0);
     compareGenerated(generated, reference, transcript.words);
     compareAligned(reference, transcript.words);
+    if (plain) compareAlignedPlain(plain, reference, transcript.words);
   }
   if (plain && !lrc) {
     const result = alignLyrics(plain, transcript.words);
