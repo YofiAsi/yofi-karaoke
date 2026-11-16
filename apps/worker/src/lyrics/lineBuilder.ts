@@ -1,7 +1,5 @@
 // Turns timed transcript words into karaoke sized LRC lines and drops typical Whisper hallucinations.
 import {
-  hasUnspacedScript,
-  isUnspacedChar,
   lineUnits,
   normalizeToken,
   type TimedLine,
@@ -220,11 +218,7 @@ function groupUnits(group: Group): number {
 }
 
 function needsSpace(before: string, raw: string): boolean {
-  if (before.length === 0) return false;
-  if (/^\s/.test(raw)) return true;
-  const last = before[before.length - 1];
-  const first = raw.trim()[0] ?? "";
-  return !isUnspacedChar(last) && !isUnspacedChar(first) && !hasUnspacedScript(raw);
+  return before.length > 0 && /^\s/.test(raw);
 }
 
 export function joinWords(words: TranscriptWord[]): string {

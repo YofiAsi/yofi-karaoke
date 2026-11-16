@@ -26,8 +26,8 @@ const MIN_MATCH_RATE = 0.35;
 const MIN_ANCHORED_FRACTION = 0.5;
 const MIN_LINE_MATCH_FRACTION = 0.3;
 const MIN_LINE_STEP_SECONDS = 0.1;
-const LINE_SPAN_SLACK_SECONDS = 4;
-const LINE_SPAN_PER_TOKEN_SECONDS = 1.2;
+const LINE_SPAN_SLACK_SECONDS = 2;
+const LINE_SPAN_TOKEN_FACTOR = 3;
 const LRC_TIMESTAMP = /^(\s*\[\d+:\d+(?:\.\d+)?\])+/;
 const REPEAT_MARKER = /\s*[([]?\s*[x×]\s*\d+\s*[)\]]?\s*$/i;
 const SECTION_LABEL = /^\s*[[(]?\s*(intro|outro|verse|chorus|pre-?chorus|bridge|hook|refrain|פזמון|בית|מעבר|גשר)(?!\p{L})[\s\d]{0,3}[\])]?\s*:?\s*$/iu;
@@ -114,9 +114,9 @@ function lineMatches(refs: RefToken[], matches: Map<number, number>, heard: Time
   return perLine;
 }
 
-function coherent(matched: LineMatch[], tokenCount: number): LineMatch[] {
+function coherent(matched: LineMatch[], tokenCount: number, perToken: number): LineMatch[] {
   const center = median(matched.map((m) => m.time));
-  const limit = LINE_SPAN_SLACK_SECONDS + tokenCount * LINE_SPAN_PER_TOKEN_SECONDS;
+  const limit = LINE_SPAN_SLACK_SECONDS + tokenCount * perToken * LINE_SPAN_TOKEN_FACTOR;
   return matched.filter((m) => Math.abs(m.time - center) <= limit);
 }
 
@@ -125,7 +125,7 @@ function isTrusted(matched: LineMatch[], tokenCount: number): boolean {
 }
 
 function anchorLine(matched: LineMatch[], tokenCount: number, perToken: number, floor: number): Anchor | null {
-  const kept = coherent(matched, tokenCount);
+  const kept = coherent(matched, tokenCount, perToken);
   if (!isTrusted(kept, tokenCount)) return null;
   const first = kept[0];
   const lastMatch = kept[kept.length - 1].time;
