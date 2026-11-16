@@ -10,12 +10,15 @@ function formatTime(totalSeconds: number) {
 interface NowPlayingProps {
   current: QueueItem | null;
   playbackState: PlaybackStateView | null;
+  hasReadyUpcoming?: boolean;
 }
 
-export function NowPlaying({ current, playbackState }: NowPlayingProps) {
+export function NowPlaying({ current, playbackState, hasReadyUpcoming = false }: NowPlayingProps) {
   if (!current) {
     return (
-      <p className="text-neutral-500 mt-3">Queue is empty. Add a song to start.</p>
+      <p className="text-neutral-500 mt-3">
+        {hasReadyUpcoming ? "Songs are ready. The host can press play to start." : "Queue is empty. Add a song to start."}
+      </p>
     );
   }
 

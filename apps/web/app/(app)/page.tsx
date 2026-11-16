@@ -11,6 +11,7 @@ import { QueueDrawer } from "@/components/QueueDrawer";
 export default function HomePage() {
   const {
     user,
+    isHost,
     queue,
     playbackState,
     progress,
@@ -40,7 +41,7 @@ export default function HomePage() {
           <h1 className="text-xl font-semibold">Hi, {user.name}</h1>
         </div>
         <div className="flex items-center gap-2">
-          {user.isHost && (
+          {isHost && (
             <Link
               href="/library"
               className="rounded-full border border-neutral-700 text-neutral-300 px-4 py-2.5 text-sm font-semibold min-h-11 inline-flex items-center"
@@ -63,9 +64,13 @@ export default function HomePage() {
           Now playing
         </p>
         <div className="shrink-0">
-          <NowPlaying current={current} playbackState={playbackState} />
+          <NowPlaying
+            current={current}
+            playbackState={playbackState}
+            hasReadyUpcoming={upcoming.some((i) => i.state === "ready")}
+          />
           <HostControls
-            user={user}
+            isHost={isHost}
             playbackState={playbackState}
             currentSongDuration={current?.song.durationSeconds}
             currentSongId={current?.song.id}
@@ -89,9 +94,7 @@ export default function HomePage() {
         onClose={() => setQueueOpen(false)}
         items={upcoming}
         progress={progress}
-        canRetryAsHost={
-          !!user.isHost && playbackState?.hostUserId === user.id
-        }
+        canRetryAsHost={isHost}
         onQueueChanged={refetchQueue}
       />
     </main>

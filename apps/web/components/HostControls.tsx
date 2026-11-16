@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { User, PlaybackStateView } from "@karaoke/shared";
+import type { PlaybackStateView } from "@karaoke/shared";
 import { api } from "@/lib/api";
 
 interface HostControlsProps {
-  user: User;
+  isHost: boolean;
   playbackState: PlaybackStateView | null;
   currentSongDuration?: number;
   currentSongId?: string;
@@ -21,7 +21,7 @@ function formatOffset(offsetMs: number): string {
 }
 
 export function HostControls({
-  user,
+  isHost,
   playbackState,
   currentSongDuration,
   currentSongId,
@@ -33,11 +33,11 @@ export function HostControls({
 
   useEffect(() => setRefetchState("idle"), [currentSongId]);
 
-  // Only visible when user is the active host
-  if (!user.isHost || playbackState?.hostUserId !== user.id) return null;
+  if (!isHost) return null;
 
   const isPlaying = playbackState?.isPlaying ?? false;
   const displaySeek = seekValue !== null ? seekValue : (playbackState?.positionSeconds ?? 0);
+  const transition = { expectedQueueItemId: playbackState?.currentQueueItemId ?? null };
 
   async function handlePlay() {
     await api.post("/api/playback/play").catch(console.error);
@@ -48,11 +48,11 @@ export function HostControls({
   }
 
   async function handleSkip() {
-    await api.post("/api/playback/skip").catch(console.error);
+    await api.post("/api/playback/skip", transition).catch(console.error);
   }
 
   async function handlePrev() {
-    await api.post("/api/playback/previous").catch(console.error);
+    await api.post("/api/playback/previous", transition).catch(console.error);
   }
 
   async function handleSeekCommit(value: number) {

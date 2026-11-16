@@ -1,197 +1,194 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+// Player role: the host device claims the player, and only the player device renders <audio>.
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { PlaybackStateView } from "@karaoke/shared";
+import { api } from "@/lib/api";
 
 interface PlayerToggleProps {
-  currentSongId: string | null;
-  playbackState: PlaybackStateView | null;
   isHost: boolean;
+  isPlayer: boolean;
+  audioSongId: string | null;
+  playbackState: PlaybackStateView | null;
   onTick?: (positionSeconds: number) => void;
 }
 
-/**
- * HostAudioPlayer — in this app the host is also the player. This component
- * renders the <audio> element on the host device only, keeps it in sync with
- * PlaybackState (play/pause/seek/song switch), and requests a skip when the
- * current song finishes.
- *
- * Browsers block audio.play() until the tab has seen a user gesture; if the
- * initial play is blocked we surface a one-tap unblock button.
- */
-export function PlayerToggle({
-  currentSongId,
-  playbackState,
-  isHost,
-  onTick,
-}: PlayerToggleProps) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const wakeRef = useRef<WakeLockSentinel | null>(null);
-  const [blocked, setBlocked] = useState(false);
-  const [bgTabWarn, setBgTabWarn] = useState(false);
+const HEARTBEAT_MS = 10_000;
+const POSITION_REPORT_MS = 1000;
+const SEEK_TOLERANCE_SECONDS = 1.5;
 
-  function releaseWake() {
-    const w = wakeRef.current;
-    wakeRef.current = null;
-    void w?.release();
+function audioUrl(songId: string): string {
+  return `/api/audio/${songId}`;
+}
+
+function loadSource(el: HTMLAudioElement, songId: string | null): void {
+  if (!songId) {
+    if (el.hasAttribute("src")) {
+      el.removeAttribute("src");
+      el.load();
+    }
+    return;
   }
+  if (!el.src.endsWith(audioUrl(songId))) el.src = audioUrl(songId);
+}
 
-  async function acquireWake() {
+function usePlayerClaim(isHost: boolean): void {
+  useEffect(() => {
+    if (!isHost) return;
+    api.post("/api/player/claim").catch(console.error);
+    const id = setInterval(() => {
+      api.post("/api/player/heartbeat").catch(console.error);
+    }, HEARTBEAT_MS);
+    return () => {
+      clearInterval(id);
+      api.post("/api/player/release").catch(console.error);
+    };
+  }, [isHost]);
+}
+
+function useWakeLock() {
+  const wakeRef = useRef<WakeLockSentinel | null>(null);
+
+  const release = useCallback(() => {
+    const lock = wakeRef.current;
+    wakeRef.current = null;
+    void lock?.release();
+  }, []);
+
+  const acquire = useCallback(async () => {
     if (!("wakeLock" in navigator) || !navigator.wakeLock) return;
     try {
-      releaseWake();
+      release();
       const lock = await navigator.wakeLock.request("screen");
       wakeRef.current = lock;
       lock.addEventListener("release", () => {
         if (wakeRef.current === lock) wakeRef.current = null;
       });
     } catch {
-      /* ignore */
+      wakeRef.current = null;
     }
-  }
+  }, [release]);
 
-  // Claim the player role on mount + 10s heartbeat, release on unmount.
-  // The claim keeps PlaybackState.playerUserId in sync so server-side features
-  // (e.g. playback:tick routing, stale-takeover) work off a real user id.
-  useEffect(() => {
-    if (!isHost) return;
-    api.post("/api/player/claim").catch(console.error);
-    const hb = setInterval(() => {
-      api.post("/api/player/heartbeat").catch(console.error);
-    }, 10_000);
-    return () => {
-      clearInterval(hb);
-      api.post("/api/player/release").catch(console.error);
-    };
-  }, [isHost]);
+  useEffect(() => release, [release]);
+
+  return { acquire, release };
+}
+
+function useVisibilityWatch(audioRef: RefObject<HTMLAudioElement | null>, onVisiblePlaying: () => void) {
+  const [hiddenWhilePlaying, setHiddenWhilePlaying] = useState(false);
 
   useEffect(() => {
-    if (!isHost) return;
-    function onVis() {
-      const el = audioRef.current;
-      if (document.hidden && el && !el.paused) setBgTabWarn(true);
-      else setBgTabWarn(false);
+    function onVisibilityChange() {
+      const playing = !!audioRef.current && !audioRef.current.paused;
+      setHiddenWhilePlaying(document.hidden && playing);
+      if (!document.hidden && playing) onVisiblePlaying();
     }
-    document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-  }, [isHost]);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [audioRef, onVisiblePlaying]);
 
-  useEffect(() => {
-    return () => {
-      releaseWake();
-    };
-  }, []);
+  return hiddenWhilePlaying;
+}
 
-  // Emit 1Hz position while audio is actually playing (for lyric sync in Phase 3).
+function usePositionReports(audioRef: RefObject<HTMLAudioElement | null>): void {
   useEffect(() => {
-    if (!isHost) return;
     const id = setInterval(() => {
       const el = audioRef.current;
       if (!el || el.paused) return;
-      api
-        .post("/api/playback/position", { positionSeconds: el.currentTime })
-        .catch(console.error);
-    }, 1000);
+      api.post("/api/playback/position", { positionSeconds: el.currentTime }).catch(console.error);
+    }, POSITION_REPORT_MS);
     return () => clearInterval(id);
-  }, [isHost]);
+  }, [audioRef]);
+}
 
-  // When the current song changes, load the new src. Play/pause is handled
-  // by the isPlaying effect below so we don't double-trigger playback.
-  useEffect(() => {
-    if (!isHost) return;
-    const el = audioRef.current;
-    if (!el || !currentSongId) return;
-    const nextSrc = `/api/audio/${currentSongId}`;
-    if (!el.src.endsWith(nextSrc)) {
-      el.src = nextSrc;
-    }
-  }, [isHost, currentSongId]);
+function PlayerAudio({
+  audioSongId,
+  playbackState,
+  onTick,
+}: Omit<PlayerToggleProps, "isHost" | "isPlayer">) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const loadedItemIdRef = useRef<string | null>(null);
+  const [blocked, setBlocked] = useState(false);
+  const { acquire: acquireWake, release: releaseWake } = useWakeLock();
+  const hiddenWhilePlaying = useVisibilityWatch(audioRef, acquireWake);
+  usePositionReports(audioRef);
 
-  // Sync play/pause with PlaybackState.isPlaying.
-  useEffect(() => {
-    if (!isHost) return;
-    const el = audioRef.current;
-    if (!el || !playbackState) return;
-    if (playbackState.isPlaying && el.paused) {
-      el.play()
-        .then(() => {
-          setBlocked(false);
-          void acquireWake();
-        })
-        .catch(() => setBlocked(true));
-    } else if (!playbackState.isPlaying && !el.paused) {
-      el.pause();
-      releaseWake();
-    }
-  }, [isHost, playbackState?.isPlaying, currentSongId]);
+  const currentQueueItemId = playbackState?.currentQueueItemId ?? null;
+  const isPlaying = playbackState?.isPlaying ?? false;
+  const positionSeconds = playbackState?.positionSeconds ?? 0;
 
-  // Sync seek. 1.5s is wider than the 1Hz position POST round-trip so we
-  // never fight our own position reports.
-  useEffect(() => {
-    if (!isHost) return;
-    const el = audioRef.current;
-    if (!el || !playbackState) return;
-    const drift = Math.abs(el.currentTime - playbackState.positionSeconds);
-    if (drift > 1.5) {
-      el.currentTime = playbackState.positionSeconds;
-    }
-  }, [isHost, playbackState?.positionSeconds]);
-
-  useEffect(() => {
-    if (!isHost || !onTick) return;
-    const el = audioRef.current;
-    if (!el) return;
-    const handler = () => onTick(el.currentTime);
-    el.addEventListener("timeupdate", handler);
-    return () => el.removeEventListener("timeupdate", handler);
-  }, [isHost, onTick]);
-
-  // Audio ended → advance. Host is the player, so we can skip directly.
-  useEffect(() => {
-    if (!isHost) return;
-    const el = audioRef.current;
-    if (!el) return;
-    async function onEnded() {
-      await api.post("/api/playback/skip").catch(console.error);
-    }
-    el.addEventListener("ended", onEnded);
-    return () => el.removeEventListener("ended", onEnded);
-  }, [isHost]);
-
-  async function handleUnblock() {
+  const startAudio = useCallback(async () => {
     const el = audioRef.current;
     if (!el) return;
     try {
       await el.play();
       setBlocked(false);
       void acquireWake();
-    } catch (err) {
-      console.error("audio unblock failed", err);
+    } catch {
+      setBlocked(true);
     }
-  }
+  }, [acquireWake]);
 
-  if (!isHost) return null;
-  if (!currentSongId) return null;
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el) return;
+    loadedItemIdRef.current = audioSongId ? currentQueueItemId : null;
+    loadSource(el, audioSongId);
+  }, [audioSongId, currentQueueItemId]);
+
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el) return;
+    if (isPlaying && audioSongId && el.paused) void startAudio();
+    if (!isPlaying && !el.paused) {
+      el.pause();
+      releaseWake();
+    }
+  }, [isPlaying, audioSongId, startAudio, releaseWake]);
+
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el) return;
+    if (Math.abs(el.currentTime - positionSeconds) > SEEK_TOLERANCE_SECONDS) {
+      el.currentTime = positionSeconds;
+    }
+  }, [positionSeconds]);
+
+  function reportEnded() {
+    const expectedQueueItemId = loadedItemIdRef.current;
+    if (!expectedQueueItemId) return;
+    api.post("/api/playback/ended", { expectedQueueItemId }).catch(console.error);
+  }
 
   return (
     <div className="mt-4">
-      <audio ref={audioRef} preload="metadata" playsInline />
-      {bgTabWarn ? (
+      <audio
+        ref={audioRef}
+        preload="metadata"
+        playsInline
+        onEnded={reportEnded}
+        onTimeUpdate={(e) => onTick?.(e.currentTarget.currentTime)}
+      />
+      {hiddenWhilePlaying ? (
         <p className="text-xs text-amber-400/90 mb-2 px-1">
-          This tab is in the background — iOS may pause audio. Keep the screen on and the
+          This tab is in the background, so iOS may pause audio. Keep the screen on and the
           tab visible while hosting playback.
         </p>
       ) : null}
-      {blocked && (
+      {blocked && audioSongId ? (
         <button
           type="button"
-          onClick={handleUnblock}
+          onClick={startAudio}
           className="w-full rounded-xl bg-white text-black py-4 font-semibold min-h-12"
         >
           ▶ Tap to start audio
         </button>
-      )}
+      ) : null}
     </div>
   );
+}
+
+export function PlayerToggle({ isHost, isPlayer, ...audioProps }: PlayerToggleProps) {
+  usePlayerClaim(isHost);
+  return isPlayer ? <PlayerAudio {...audioProps} /> : null;
 }
