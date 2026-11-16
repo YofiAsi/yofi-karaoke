@@ -1,16 +1,33 @@
 #!/bin/sh
-# Container entrypoint for api and worker: refreshes yt-dlp without blocking startup, logs tool versions, then execs CMD.
+# Container entrypoint for api and worker: refreshes yt-dlp without blocking startup or losing the installed copy, logs tool versions, then execs CMD.
 
 VENV_DIR="${VENV_DIR:-/opt/venv}"
+PIP="$VENV_DIR/bin/pip"
+YTDLP_SPEC="yt-dlp[default]"
+
+download_ytdlp() {
+  timeout "${YTDLP_UPDATE_TIMEOUT_SECONDS:-45}" "$PIP" download \
+    --quiet --no-cache-dir --disable-pip-version-check --timeout 10 --retries 1 \
+    --dest "$1" "$YTDLP_SPEC"
+}
+
+install_ytdlp_from() {
+  "$PIP" install --quiet --disable-pip-version-check --no-index \
+    --find-links "$1" --upgrade "$YTDLP_SPEC"
+}
 
 refresh_ytdlp() {
   if [ "${YTDLP_AUTO_UPDATE:-true}" != "true" ]; then
     echo "entrypoint: yt-dlp auto update disabled"
     return
   fi
-  timeout "${YTDLP_UPDATE_TIMEOUT_SECONDS:-120}" "$VENV_DIR/bin/pip" install \
-    --quiet --no-cache-dir --disable-pip-version-check --upgrade "yt-dlp[default]" \
-    || echo "entrypoint: yt-dlp update failed, keeping the installed version" >&2
+  wheel_dir=$(mktemp -d)
+  if ! download_ytdlp "$wheel_dir"; then
+    echo "entrypoint: yt-dlp download failed or timed out, keeping the installed version" >&2
+  elif ! install_ytdlp_from "$wheel_dir"; then
+    echo "entrypoint: yt-dlp install failed, keeping the installed version" >&2
+  fi
+  rm -rf "$wheel_dir"
 }
 
 log_versions() {
