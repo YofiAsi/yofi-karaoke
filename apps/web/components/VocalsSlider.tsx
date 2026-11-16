@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { VocalsGainBody } from "@karaoke/shared";
 import { api } from "@/lib/api";
-import { createThrottle, type Throttle } from "@/lib/throttle";
+import { createLatestSender, type LatestSender } from "@/lib/latestSender";
 import {
   VOCALS_SEND_INTERVAL_MS,
   VOCALS_SETTLE_MS,
@@ -29,24 +29,24 @@ function useLatest<T>(value: T) {
 
 function useGainSender(queueItemId: string, onFailure: () => void) {
   const lastSendRef = useRef<LocalSend | null>(null);
-  const throttleRef = useRef<Throttle<number> | null>(null);
+  const senderRef = useRef<LatestSender<number> | null>(null);
   const onFailureRef = useLatest(onFailure);
 
   useEffect(() => {
-    const throttle = createThrottle((gain: number) => {
+    const sender = createLatestSender((gain: number) => {
       lastSendRef.current = { gain, atMs: Date.now() };
       const body: VocalsGainBody = { gain, queueItemId };
-      api.post("/api/playback/vocals", body).catch((err) => {
+      return api.post("/api/playback/vocals", body).catch((err) => {
         console.error(err);
         lastSendRef.current = null;
         onFailureRef.current();
       });
     }, VOCALS_SEND_INTERVAL_MS);
-    throttleRef.current = throttle;
-    return () => throttle.cancel();
+    senderRef.current = sender;
+    return () => sender.cancel();
   }, [queueItemId, onFailureRef]);
 
-  return { lastSendRef, throttleRef };
+  return { lastSendRef, senderRef };
 }
 
 function useSharedGain(queueItemId: string, serverGain: number) {
@@ -55,7 +55,7 @@ function useSharedGain(queueItemId: string, serverGain: number) {
   const serverGainRef = useLatest(serverGain);
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const revert = useCallback(() => setValue(serverGainRef.current), [serverGainRef]);
-  const { lastSendRef, throttleRef } = useGainSender(queueItemId, revert);
+  const { lastSendRef, senderRef } = useGainSender(queueItemId, revert);
 
   const reconcile = useCallback(() => {
     if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
@@ -75,15 +75,15 @@ function useSharedGain(queueItemId: string, serverGain: number) {
 
   const change = useCallback((gain: number) => {
     setValue(gain);
-    throttleRef.current?.push(gain);
-  }, [throttleRef]);
+    senderRef.current?.push(gain);
+  }, [senderRef]);
 
   const release = useCallback(() => {
     if (!draggingRef.current) return;
     draggingRef.current = false;
-    throttleRef.current?.flush();
+    senderRef.current?.flush();
     reconcile();
-  }, [throttleRef, reconcile]);
+  }, [senderRef, reconcile]);
 
   const startDrag = useCallback(() => {
     draggingRef.current = true;
