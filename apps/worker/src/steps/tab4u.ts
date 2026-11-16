@@ -20,17 +20,23 @@ type PageOutcome =
   | { kind: "skipped" }
   | { kind: Tab4uFailure; detail: string; blocked: boolean };
 
+type ArtistMatch = "full" | "first_word" | null;
+
 const BASE_URL = "https://www.tab4u.com/";
+const SITE_HOST = "tab4u.com";
 const USER_AGENT = "karaoke-worker/0.2 (self hosted party karaoke)";
 const MAX_SEARCHES = 2;
 const MIN_LYRIC_LINES = 4;
 const BREAKER_THRESHOLD = 3;
 export const BREAKER_COOLDOWN_MS = 30 * 60_000;
+export const MIN_REQUEST_BUDGET_MS = 1_500;
 const MIN_FUZZY_TITLE_LENGTH = 6;
 const HEBREW_LETTER = /[א-ת]/;
 const BLOCK_STATUSES = new Set([403, 429, 503]);
-const CHALLENGE_MARKERS =
-  /captcha|cf-chl|challenge-platform|cf-browser-verification|just a moment\.\.\.|attention required|access denied|ddos-guard|perimeterx|incapsula|turnstile/i;
+const SITE_SHELL_MARKER = 'id="site_wrap"';
+const PAGE_TITLE = /<title[^>]*>([\s\S]*?)<\/title>/i;
+const CHALLENGE_TITLE =
+  /captcha|just a moment|attention required|access denied|security check|verify you are human|ddos-guard|are you a robot/i;
 const RESULT_LINK = /<a\b[^>]*\bhref="(tabs\/songs\/\d+_[^"?#/]+\.html)"[^>]*>([\s\S]*?)<\/a>/gi;
 const RESULT_TITLE = /class="sNameI19"[^>]*>([\s\S]*?)<\/div>/i;
 const RESULT_ARTIST = /class="aNameI19"[^>]*>([\s\S]*?)<\/div>/i;
@@ -126,9 +132,7 @@ export function parseSearchResults(html: string): Tab4uSearchResult[] {
 }
 
 export function pickTab4uResult(results: Tab4uSearchResult[], candidates: LyricsCandidate[]): Tab4uSearchResult | null {
-  const pairMatch = results.find((result) =>
-    candidates.some((c) => titlesMatch(result.title, c.track) && artistsMatch(result.artist, c.artist)),
-  );
+  const pairMatch = results.find((result) => candidates.some((c) => pairMatches(result, c)));
   return pairMatch ?? results.find((result) => candidates.some((c) => coversWholeTitle(result, c.track))) ?? null;
 }
 
@@ -151,13 +155,20 @@ export function titlesMatch(found: string, wanted: string): boolean {
   return editDistance(a, b) <= (Math.max(a.length, b.length) >= 12 ? 2 : 1);
 }
 
-export function artistsMatch(found: string, wanted: string): boolean {
+export function artistMatch(found: string, wanted: string): ArtistMatch {
   const a = words(found);
   const b = words(wanted);
-  if (a.length === 0 || b.length === 0) return false;
+  if (a.length === 0 || b.length === 0) return null;
   const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
-  if (shorter.length === 1) return shorter[0] === longer[0];
-  return shorter.every((word) => longer.includes(word));
+  if (shorter.length > 1) return shorter.every((word) => longer.includes(word)) ? "full" : null;
+  if (shorter[0] !== longer[0]) return null;
+  return longer.length === 1 ? "full" : "first_word";
+}
+
+export function pairMatches(result: Tab4uSearchResult, candidate: LyricsCandidate): boolean {
+  const artist = artistMatch(result.artist, candidate.artist);
+  if (artist === "full") return titlesMatch(result.title, candidate.track);
+  return artist === "first_word" && titleKey(result.title) === titleKey(candidate.track);
 }
 
 function titleKey(text: string): string {
@@ -209,27 +220,32 @@ export function decodeEntities(text: string): string {
 }
 
 async function tab4uGet(url: URL, label: string, deadlineAt: number, log: LyricsLogger): Promise<PageOutcome> {
-  if (Date.now() < health.openUntil) {
-    log(`lyrics skipped ${label}: Tab4U circuit breaker open`);
+  const skipReason = await waitForSlot(deadlineAt);
+  if (skipReason) {
+    log(`lyrics skipped ${label}: ${skipReason}`);
     return { kind: "skipped" };
   }
-  const waitMs = reserveSlot(deadlineAt);
-  if (waitMs === null) {
-    log(`lyrics skipped ${label}: lookup deadline reached`);
-    return { kind: "skipped" };
+  const timeoutMs = Math.min(env.TAB4U_TIMEOUT_MS, deadlineAt - Date.now());
+  const outcome = await fetchPage(url, timeoutMs);
+  if (outcome.kind === "timeout" && timeoutMs < env.TAB4U_TIMEOUT_MS) {
+    log(`lyrics timeout for ${label}: lookup deadline reached during the request`);
+    return outcome;
   }
-  if (waitMs > 0) await sleep(waitMs);
-  const outcome = await fetchPage(url, Math.min(env.TAB4U_TIMEOUT_MS, deadlineAt - Date.now()));
   recordHealth(outcome, label, log);
   return outcome;
 }
 
-function reserveSlot(deadlineAt: number): number | null {
-  const now = Date.now();
-  const slotAt = Math.max(now, health.nextSlotAt);
-  if (slotAt >= deadlineAt) return null;
-  health.nextSlotAt = slotAt + env.TAB4U_MIN_INTERVAL_MS;
-  return slotAt - now;
+async function waitForSlot(deadlineAt: number): Promise<string | null> {
+  for (;;) {
+    const now = Date.now();
+    if (now < health.openUntil) return "Tab4U circuit breaker open";
+    if (Math.max(now, health.nextSlotAt) + MIN_REQUEST_BUDGET_MS > deadlineAt) return "lookup deadline too close";
+    if (now >= health.nextSlotAt) {
+      health.nextSlotAt = now + env.TAB4U_MIN_INTERVAL_MS;
+      return null;
+    }
+    await sleep(health.nextSlotAt - now);
+  }
 }
 
 async function fetchPage(url: URL, timeoutMs: number): Promise<PageOutcome> {
@@ -252,11 +268,19 @@ async function toPageOutcome(response: Response): Promise<PageOutcome> {
   if (BLOCK_STATUSES.has(response.status)) return blockedPage(`HTTP ${response.status}`);
   if (response.status === 404) return { kind: "not_found" };
   if (!response.ok) return { kind: "http_error", detail: `HTTP ${response.status}`, blocked: false };
-  if (response.url && new URL(response.url).host !== new URL(BASE_URL).host) {
-    return blockedPage(`redirected to ${new URL(response.url).host}`);
-  }
+  const host = response.url ? new URL(response.url).hostname : new URL(BASE_URL).hostname;
+  if (!isSiteHost(host)) return blockedPage(`redirected to ${host}`);
   const body = await response.text();
-  return CHALLENGE_MARKERS.test(body) ? blockedPage("challenge or block page") : { kind: "ok", body };
+  return isChallengePage(body) ? blockedPage("challenge or block page") : { kind: "ok", body };
+}
+
+export function isSiteHost(hostname: string): boolean {
+  return hostname.toLowerCase().replace(/^www\./, "") === SITE_HOST;
+}
+
+export function isChallengePage(body: string): boolean {
+  const title = PAGE_TITLE.exec(body)?.[1] ?? "";
+  return !body.includes(SITE_SHELL_MARKER) || CHALLENGE_TITLE.test(title);
 }
 
 function blockedPage(detail: string): PageOutcome {

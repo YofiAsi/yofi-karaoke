@@ -6,9 +6,11 @@ const { mockEnv } = vi.hoisted(() => ({ mockEnv: { TAB4U_TIMEOUT_MS: 1_000, TAB4
 vi.mock("../env.js", () => ({ env: mockEnv }));
 
 import {
-  artistsMatch,
+  artistMatch,
   coversWholeTitle,
   decodeEntities,
+  isChallengePage,
+  isSiteHost,
   lookupTab4u,
   parseSearchResults,
   parseSongLyrics,
@@ -56,13 +58,19 @@ function siteRoute(url: URL): Response {
   return url.pathname === "/resultsSimple" ? html(SEARCH_HTML) : html(SONG_HTML);
 }
 
+function noMatchRoute(): Response {
+  return html('<html><head><title>Tab4U</title></head><body><div id="site_wrap"></div></body></html>');
+}
+
 beforeEach(() => {
   resetTab4uState();
   mockEnv.TAB4U_MIN_INTERVAL_MS = 0;
+  mockEnv.TAB4U_TIMEOUT_MS = 1_000;
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("parseSongLyrics", () => {
@@ -111,13 +119,22 @@ describe("result picking", () => {
   });
 
   it.each([
-    ["נופיה ידידיה", "נופיה", true],
-    ["ידידיה נופיה", "נופיה", false],
-    ["עומר אדם ושלומי שבת", "עומר אדם", true],
-    ["אייל גולן", "אייל שחר", false],
-    ["זוהר ארגוב", "Zohar Argov", false],
+    ["נופיה ידידיה", "נופיה", "first_word"],
+    ["נופיה", "נופיה", "full"],
+    ["ידידיה נופיה", "נופיה", null],
+    ["עומר אדם ושלומי שבת", "עומר אדם", "full"],
+    ["אייל גולן", "אייל שחר", null],
+    ["זוהר ארגוב", "Zohar Argov", null],
   ])("artist %s against %s is %s", (found, wanted, expected) => {
-    expect(artistsMatch(found, wanted)).toBe(expected);
+    expect(artistMatch(found, wanted)).toBe(expected);
+  });
+
+  it("needs an exact title when the artist matched only by its first word", () => {
+    const byOmerAdam = [{ href: "tabs/songs/9_x.html", title: "שתישרף האהבה", artist: "עומר אדם" }];
+    expect(pickTab4uResult(byOmerAdam, [{ track: "שתשרף האהבה", artist: "עומר", kind: "split" }])).toBeNull();
+    expect(pickTab4uResult(byOmerAdam, [{ track: "שתשרף האהבה", artist: "עומר אדם", kind: "split" }])).not.toBeNull();
+    const exact = [{ href: "tabs/songs/8_x.html", title: "פרח (לייב)", artist: "נופיה ידידיה" }];
+    expect(pickTab4uResult(exact, nofia)).not.toBeNull();
   });
 
   it("matches a title without separator only when artist and title explain every Hebrew word", () => {
@@ -181,6 +198,18 @@ describe("lookupTab4u", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("accepts a normal page that embeds reCAPTCHA", async () => {
+    const withRecaptcha = SONG_HTML.replace("</head>", '<script src="https://www.google.com/recaptcha/api.js"></script></head>');
+    expect(isChallengePage(withRecaptcha)).toBe(false);
+    expect(isChallengePage(SEARCH_HTML)).toBe(false);
+    stubFetch((url) => (url.pathname === "/resultsSimple" ? html(SEARCH_HTML) : html(withRecaptcha)));
+    expect((await lookupTab4u(nofia, Date.now() + 10_000, silent)).kind).toBe("hit");
+  });
+
+  it("recognises a challenge by its title even inside the site shell", () => {
+    expect(isChallengePage('<html><head><title>Just a moment...</title></head><body><div id="site_wrap"></div></body></html>')).toBe(true);
+  });
+
   it("treats a redirect to another host as a block", async () => {
     stubFetch(() => {
       const response = html("<html>ok</html>");
@@ -188,6 +217,18 @@ describe("lookupTab4u", () => {
       return response;
     });
     expect(await lookupTab4u(nofia, Date.now() + 10_000, silent)).toEqual({ kind: "miss", failure: "rate_limited" });
+  });
+
+  it("treats the bare and www hosts as the same site", async () => {
+    expect(isSiteHost("tab4u.com")).toBe(true);
+    expect(isSiteHost("WWW.Tab4U.com")).toBe(true);
+    expect(isSiteHost("tab4u.com.example.test")).toBe(false);
+    stubFetch((url) => {
+      const response = siteRoute(url);
+      Object.defineProperty(response, "url", { value: `https://tab4u.com${url.pathname}` });
+      return response;
+    });
+    expect((await lookupTab4u(nofia, Date.now() + 10_000, silent)).kind).toBe("hit");
   });
 
   it("does not retry a 4xx response and opens the breaker on 403", async () => {
@@ -216,14 +257,57 @@ describe("lookupTab4u", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("spaces requests by the minimum interval across lookups", async () => {
-    mockEnv.TAB4U_MIN_INTERVAL_MS = 60;
+  it("spaces requests by the minimum interval across concurrent lookups", async () => {
+    vi.useFakeTimers();
+    mockEnv.TAB4U_MIN_INTERVAL_MS = 2_000;
     const calls = stubFetch(siteRoute);
-    await lookupTab4u(nofia, Date.now() + 10_000, silent);
-    await lookupTab4u(nofia, Date.now() + 10_000, silent);
-    const gaps = calls.slice(1).map((call, i) => call.at - calls[i].at);
-    expect(calls).toHaveLength(4);
-    for (const gap of gaps) expect(gap).toBeGreaterThanOrEqual(55);
+    const lookups = [1, 2, 3].map(() => lookupTab4u(nofia, Date.now() + 60_000, silent));
+    await vi.runAllTimersAsync();
+    expect((await Promise.all(lookups)).map((l) => l.kind)).toEqual(["hit", "hit", "hit"]);
+    expect(calls).toHaveLength(6);
+    for (const [i, call] of calls.slice(1).entries()) expect(call.at - calls[i].at).toBeGreaterThanOrEqual(2_000);
+  });
+
+  it("skips instead of sending when too little of the deadline is left", async () => {
+    const calls = stubFetch(siteRoute);
+    expect(await lookupTab4u(nofia, Date.now() + 1_000, silent)).toEqual({ kind: "miss", failure: null });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("does not count timeouts caused by the lookup deadline as Tab4U failures", async () => {
+    mockEnv.TAB4U_TIMEOUT_MS = 8_000;
+    const calls = stubFetch(() => {
+      throw Object.assign(new Error("aborted"), { name: "TimeoutError" });
+    });
+    for (let i = 0; i < 4; i += 1) {
+      expect(await lookupTab4u(nofia, Date.now() + 3_000, silent)).toEqual({ kind: "miss", failure: "timeout" });
+    }
+    await lookupTab4u(nofia, Date.now() + 60_000, silent);
+    expect(calls).toHaveLength(5);
+  });
+
+  it("rechecks the breaker after waiting for a slot", async () => {
+    vi.useFakeTimers();
+    mockEnv.TAB4U_MIN_INTERVAL_MS = 2_000;
+    const calls = stubFetch(() => html("", 403));
+    const lookups = [1, 2].map(() => lookupTab4u(nofia, Date.now() + 60_000, silent));
+    await vi.runAllTimersAsync();
+    expect(await Promise.all(lookups)).toEqual([
+      { kind: "miss", failure: "rate_limited" },
+      { kind: "miss", failure: null },
+    ]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("rechecks the deadline after another lookup took the slot", async () => {
+    vi.useFakeTimers();
+    mockEnv.TAB4U_MIN_INTERVAL_MS = 2_000;
+    const calls = stubFetch(noMatchRoute);
+    const start = Date.now();
+    const lookups = [60_000, 60_000, 5_000].map((budget) => lookupTab4u(nofia, start + budget, silent));
+    await vi.runAllTimersAsync();
+    await Promise.all(lookups);
+    expect(calls.map((c) => c.at - start)).toEqual([0, 2_000]);
   });
 
   it("makes no request once the lookup deadline has passed", async () => {
