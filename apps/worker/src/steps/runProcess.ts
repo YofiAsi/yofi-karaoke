@@ -18,20 +18,36 @@ export function treeKillCommand(platform: NodeJS.Platform, pid: number): [string
   return ["taskkill", ["/pid", String(pid), "/T", "/F"]];
 }
 
+const OWN_PROCESS_GROUP = process.platform !== "win32";
+
+function killProcessGroup(pid: number): boolean {
+  try {
+    process.kill(-pid, "SIGKILL");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function killTree(child: ChildProcess): void {
   const command = child.pid ? treeKillCommand(process.platform, child.pid) : null;
-  if (!command) {
-    child.kill("SIGKILL");
+  if (command) {
+    spawn(command[0], command[1], { stdio: "ignore", windowsHide: true }).on("error", () => child.kill());
     return;
   }
-  spawn(command[0], command[1], { stdio: "ignore", windowsHide: true }).on("error", () => child.kill());
+  if (!child.pid || !killProcessGroup(child.pid)) child.kill("SIGKILL");
 }
 
 export function runProcess(cmd: string, args: string[], opts: RunOptions): Promise<ProcessOutput> {
   const label = opts.label ?? cmd;
   return new Promise((resolve, reject) => {
     const stdin = opts.input === undefined ? "ignore" : "pipe";
-    const child = spawn(cmd, args, { stdio: [stdin, "pipe", "pipe"], windowsHide: true, env: opts.env ?? process.env });
+    const child = spawn(cmd, args, {
+      stdio: [stdin, "pipe", "pipe"],
+      windowsHide: true,
+      detached: OWN_PROCESS_GROUP,
+      env: opts.env ?? process.env,
+    });
     child.stdin?.on("error", () => void 0);
     child.stdin?.end(opts.input, "utf8");
     let stdout = "";
