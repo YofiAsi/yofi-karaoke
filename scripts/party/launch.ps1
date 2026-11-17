@@ -1,6 +1,6 @@
 # Double click entry point for party mode: shows live logs, keeps a terminal log and stops the stack when this window closes.
 param(
-    [switch]$Tunnel
+    [switch]$NoTunnel
 )
 
 . (Join-Path $PSScriptRoot "common.ps1")
@@ -26,6 +26,13 @@ function Start-CloseWatcher {
         -ArgumentList @("-NoProfile", "-File", "`"$watcher`"", "-LauncherPid", "$PID")
 }
 
+function Test-TunnelWanted {
+    if ($NoTunnel) { return $false }
+    if (Find-Cloudflared) { return $true }
+    Write-Host "cloudflared is not installed, so this run is local only. Install it with: winget install Cloudflare.cloudflared" -ForegroundColor Yellow
+    return $false
+}
+
 function Wait-BeforeClosing {
     Write-Host ""
     Read-Host "Press Enter to close this window" | Out-Null
@@ -39,5 +46,5 @@ if (Test-PartyRunning) {
 }
 Start-TerminalLog
 Start-CloseWatcher
-& (Join-Path $PSScriptRoot "start.ps1") -ShowLogs -Tunnel:$Tunnel
+& (Join-Path $PSScriptRoot "start.ps1") -ShowLogs -Tunnel:(Test-TunnelWanted)
 Wait-BeforeClosing
