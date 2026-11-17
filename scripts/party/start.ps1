@@ -4,6 +4,7 @@ param(
     [string]$ToolsDir,
     [string]$PostgresBin,
     [switch]$Tunnel,
+    [switch]$ShowLogs,
     [int]$WebPort = 3000,
     [int]$ApiPort = 4100,
     [int]$PgPort = 54329
@@ -20,6 +21,7 @@ $ApiUrl = "http://127.0.0.1:$ApiPort"
 $WebUrl = "http://127.0.0.1:$WebPort"
 $script:Children = New-Object System.Collections.ArrayList
 $script:PgBin = $null
+$script:LogOffsets = @{}
 
 function Resolve-PostgresBin {
     if (-not $PostgresBin) { return (Find-PostgresBin $Paths) }
@@ -323,8 +325,32 @@ function Remove-Child($Child) {
     Save-ProcessList
 }
 
+function Read-NewLogLines([string]$File) {
+    if (-not (Test-Path $File)) { return @() }
+    $start = [long]$script:LogOffsets[$File]
+    $stream = [System.IO.File]::Open($File, "Open", "Read", "ReadWrite, Delete")
+    try {
+        $bytes = New-Object byte[] ([Math]::Max(0, $stream.Length - $start))
+        [void]$stream.Seek($start, "Begin")
+        [void]$stream.Read($bytes, 0, $bytes.Length)
+    } finally { $stream.Dispose() }
+    $complete = [Array]::LastIndexOf($bytes, [byte]10) + 1
+    if ($complete -eq 0) { return @() }
+    $script:LogOffsets[$File] = $start + $complete
+    return @([System.Text.Encoding]::UTF8.GetString($bytes, 0, $complete) -split "\r?\n" | Where-Object { $_ })
+}
+
+function Show-NewLogLines {
+    foreach ($child in $script:Children) {
+        foreach ($file in @($child.log, $child.err)) {
+            Read-NewLogLines $file | ForEach-Object { Write-Host "[$($child.name)] $_" }
+        }
+    }
+}
+
 function Wait-UntilChildExits {
     while ($true) {
+        if ($ShowLogs) { Show-NewLogLines }
         $exited = Get-ExitedChild
         if ($exited -and $exited.name -eq "tunnel") {
             Write-Host "The tunnel stopped; guests on the same WiFi can keep singing. Restart with -Tunnel for a new public URL." -ForegroundColor Yellow

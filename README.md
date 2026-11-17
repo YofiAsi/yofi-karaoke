@@ -105,6 +105,8 @@ Press Ctrl+C to stop everything, Postgres included. After a crash or a closed wi
 powershell -ExecutionPolicy Bypass -File scripts\party\stop.ps1
 ```
 
+Double clicking `karaoke.cmd` in the repo root does the same in its own terminal window: it starts the stack, prints the api, worker and web log lines live, saves everything the window shows to `logs\launcher-<time>.log` in the data folder, and stops the stack, Postgres included, when the window is closed. `karaoke.cmd -Tunnel` adds the tunnel.
+
 The first time web listens on the network, Windows Defender Firewall asks whether to allow Node.js. Allow it on private networks or guests on the WiFi cannot connect; the scripts never change firewall rules.
 
 ### Where data lives
