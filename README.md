@@ -105,14 +105,6 @@ Press Ctrl+C to stop everything, Postgres included. After a crash or a closed wi
 powershell -ExecutionPolicy Bypass -File scripts\party\stop.ps1
 ```
 
-To fill the library from a list, for example the songs of another installation, put one YouTube link or video id per line in a text file and run this while party mode is running:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\party\import-songs.ps1 -ListFile songs.txt
-```
-
-Each video is added to the library and processed in full (stems, lyrics, word timing) without entering the play queue. Songs already in the library are skipped, and videos YouTube no longer serves are reported as failed. On the other installation the list comes from `SELECT "youtubeVideoId" FROM "Song"`.
-
 The first time web listens on the network, Windows Defender Firewall asks whether to allow Node.js. Allow it on private networks or guests on the WiFi cannot connect; the scripts never change firewall rules.
 
 ### Where data lives
