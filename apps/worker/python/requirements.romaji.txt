@@ -1,4 +1,4 @@
 pykakasi>=2.3,<3
-cutlet>=0.5.2,<0.6
+cutlet==0.5.2
 fugashi>=1.3,<2
 unidic-lite>=1.0.8,<1.1

@@ -167,7 +167,13 @@ function Install-NodeModules {
     try { Invoke-Pnpm @("install", "--frozen-lockfile") } finally { Pop-Location }
 }
 
+function Test-RomajiPackages {
+    & $Paths.VenvPython -c "import importlib.util as u, sys; sys.exit(0 if all(u.find_spec(n) for n in ('pykakasi', 'cutlet', 'fugashi', 'unidic_lite')) else 1)"
+    return $LASTEXITCODE -eq 0
+}
+
 function Install-RomajiPackages {
+    if (Test-RomajiPackages) { return }
     $uv = Find-Uv $Paths
     if (-not $uv) { Write-Host "uv was not found, so the romaji packages were not checked." -ForegroundColor Yellow; return }
     Set-UvEnvironment $Paths

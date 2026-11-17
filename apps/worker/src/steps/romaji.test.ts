@@ -87,7 +87,7 @@ describe("romanizeLyrics", () => {
     ["Chinese with one の", "[00:01.00]今天天气很好我们一起走吧\n[00:04.00]城市の夜晚灯火辉煌"],
     ["romaji under a Japanese title tag", "[ti:夢のうた]\n[ar:うたびと]\n[00:01.00]yume o mita"],
     ["Hebrew", "[00:01.00]שיר על הים"],
-    ["English", "[00:01.00]Dancing in the moonlight"],
+    ["English", "[00:01.00]Walking under paper lanterns"],
     ["romaji", "[00:01.00]yume o mita"],
   ])("leaves %s lyrics untouched without running Python", async (_name, synced) => {
     const input = lyrics(synced, null);
@@ -96,7 +96,7 @@ describe("romanizeLyrics", () => {
   });
 
   it("ignores LRC tag lines when deciding whether a song is Japanese", () => {
-    expect(needsRomaji(lyrics("[ti:夢のうた]\n[00:01.00]Dancing in the moonlight", null))).toBe(false);
+    expect(needsRomaji(lyrics("[ti:夢のうた]\n[00:01.00]Walking under paper lanterns", null))).toBe(false);
     expect(needsRomaji(lyrics("[ti:Song]\n[00:01.00]夢をみた", null))).toBe(true);
   });
 

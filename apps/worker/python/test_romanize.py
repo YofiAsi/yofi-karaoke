@@ -67,42 +67,65 @@ class CutletConversionTest(unittest.TestCase):
     def test_cutlet_reports_no_fallback(self):
         self.assertIsNone(romanize_lines(["夢をみた"])["fallback"])
 
+    def test_decoration_symbols_and_the_wave_dash_survive(self):
+        self.assertEqual(convert("君〜", "ラララ〜", "ありがとう♡"), ["kimi~", "rarara~", "arigatou ♡"])
+        self.assertEqual(convert("★夢★", "〜♪", "♪ 君と", "夢々"), ["★ yume ★", "~ ♪", "♪ kimi to", "yumeyume"])
+
+    def test_a_converted_line_is_never_empty(self):
+        self.assertEqual(convert("っ", "ｯ", "ゆめ"), ["っ", "ｯ", "yume"])
+
+    def test_latin_after_full_width_punctuation_gets_a_space(self):
+        lines = convert("君、Hello", "夢。I know", "君〜Hello", "ゆめ")
+        self.assertEqual(lines, ["kimi, Hello", "yume. I know", "kimi~ Hello", "yume"])
+
+    def test_small_tsu_before_ascii_punctuation_keeps_the_word(self):
+        self.assertEqual(convert("待っ!", "待って!"), ["ma!", "matte!"])
+
+    def test_digits_are_read_together_with_their_counters(self):
+        lines = convert("3人で1日", "12時", "２０歳", "7月7日", "5回", "2年", "12月", "10分", "第3話", "ゆめのなか")
+        expected = ["3 nin de 1 nichi", "12 ji", "20 sai", "7 gatsu 7 nichi", "5 kai", "2 nen", "12 gatsu", "10 fun", "dai 3 hanashi", "yume no naka"]
+        self.assertEqual(lines, expected)
+
 
 @unittest.skipUnless(HAS_CUTLET and HAS_PYKAKASI, "cutlet or pykakasi is not installed")
-class EngineChoiceTest(unittest.TestCase):
-    def test_digits_next_to_japanese_use_pykakasi(self):
-        self.assertEqual(convert("3人で1日", "あの日の歌"), ["3 nin de 1 nichi", "ano hi no uta"])
-
-    def test_a_line_cutlet_cannot_convert_falls_back_to_pykakasi(self):
+class FallbackTest(unittest.TestCase):
+    def test_a_line_cutlet_cannot_convert_falls_back_and_is_reported(self):
         class BrokenCutlet:
             def tagger(self, text):
                 raise RuntimeError("mecab error")
 
-        result = romanize_lines(["夢をみた"], Engines(cutlet_factory=BrokenCutlet))
-        self.assertEqual(result, {"lines": ["yume o mita"], "failed": 0, "unavailable": None, "fallback": None})
+        result = romanize_lines(["夢をみた", "ゆめ"], Engines(cutlet_factory=BrokenCutlet))
+        expected = {"lines": ["yume o mita", "yume"], "failed": 0, "unavailable": None, "fallback": "cutlet raised on lines: 2"}
+        self.assertEqual(result, expected)
 
 
 class UntouchedScriptsTest(unittest.TestCase):
+    def setUp(self):
+        self.loaded = []
+        self.engines = Engines(cutlet_factory=lambda: self.record("cutlet"), kakasi_factory=lambda: self.record("pykakasi"))
+
+    def record(self, name):
+        self.loaded.append(name)
+        return object()
+
+    def untouched(self, lines):
+        self.assertEqual(romanize_lines(lines, self.engines), {"lines": lines, "failed": 0, "unavailable": None, "fallback": None})
+        self.assertEqual(self.loaded, [])
+
     def test_chinese_with_one_stylistic_no_is_untouched(self):
         lines = ["今天天气很好我们一起走吧", "城市の夜晚灯火辉煌"]
         self.assertLess(romanize.kana_share("".join(lines)), romanize.MIN_KANA_SHARE)
-        self.assertEqual(romanize_lines(lines, self.failing_engines())["lines"], lines)
+        self.untouched(lines)
 
     def test_chinese_only_text_is_untouched(self):
-        lines = ["我们一起走吧", "今天天气很好"]
-        expected = {"lines": lines, "failed": 0, "unavailable": None, "fallback": None}
-        self.assertEqual(romanize_lines(lines, self.failing_engines()), expected)
+        self.untouched(["我们一起走吧", "今天天气很好"])
 
     def test_hebrew_and_latin_are_untouched(self):
-        lines = ["שיר על הים", "Dancing in the moonlight"]
-        self.assertEqual(romanize_lines(lines, self.failing_engines())["lines"], lines)
+        self.untouched(["שיר על הים", "Walking under paper lanterns"])
 
-    @staticmethod
-    def failing_engines():
-        def fail():
-            raise AssertionError("no romanizer may load for text that is not Japanese")
-
-        return Engines(cutlet_factory=fail, kakasi_factory=fail)
+    def test_the_guard_notices_a_loaded_romanizer(self):
+        romanize_lines(["ゆめ"], self.engines)
+        self.assertEqual(self.loaded[:1], ["cutlet"])
 
 
 class FailSafeTest(unittest.TestCase):
