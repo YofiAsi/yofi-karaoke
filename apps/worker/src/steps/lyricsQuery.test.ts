@@ -124,6 +124,27 @@ describe("buildLyricsCandidates", () => {
     ]);
   });
 
+  it("reads a Japanese corner quoted title as the track", () => {
+    const candidates = buildLyricsCandidates({
+      title: "ソラネコ「あおいまち」Official Music Video",
+      artist: "Soraneko Official",
+    });
+    expect(candidates).toEqual([
+      { track: "あおいまち", artist: "ソラネコ", kind: "split" },
+      { track: "あおいまち", artist: "Soraneko", kind: "title" },
+      { track: "ソラネコ", artist: "あおいまち", kind: "swapped" },
+    ]);
+  });
+
+  it("uses the channel as artist when a corner quoted title has no artist before it", () => {
+    const candidates = buildLyricsCandidates({ title: "『あおいまち』 - ソラネコ", artist: "Soraneko" });
+    expect(pairs(candidates)).toEqual([
+      { artist: "あおいまち", track: "ソラネコ" },
+      { artist: "Soraneko", track: "あおいまち" },
+      { artist: "ソラネコ", track: "あおいまち" },
+    ]);
+  });
+
   it("returns nothing usable for an empty or noise only title", () => {
     expect(buildLyricsCandidates({ title: "   ", artist: "Someone" })).toEqual([]);
     expect(buildLyricsCandidates({ title: "Official Music Video | HD", artist: "Someone" })).toEqual([]);

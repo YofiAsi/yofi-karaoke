@@ -22,7 +22,8 @@ const TRAILING_NOISE_WORD =
 const BRACKET_GROUP = /\([^()]*\)|\[[^\[\]]*\]|\{[^{}]*\}|【[^【】]*】/g;
 const FEAT_TAIL = /(?:^|\s)[(\[]?(?:feat|ft|featuring)\.?\s.*$/i;
 const TITLE_SEPARATOR = /\s+[-–—]\s+/;
-const QUOTES = /["“”„«»]/g;
+const QUOTES = /["“”„«»「」『』]/g;
+const CORNER_QUOTED = /^(.*?)[「『]([^「」『』]+)[」』]/;
 const HEBREW_LETTER = /[א-ת]/;
 const LATIN_LETTER = /[a-z]/i;
 const EDGE_SINGLE_QUOTES = /^['‘’]+|['‘’]+$/g;
@@ -38,7 +39,7 @@ const VEVO_SUFFIX = /vevo$/i;
 
 export function buildLyricsCandidates(input: LyricsQueryInput): LyricsCandidate[] {
   const parts = meaningfulPipeParts(input.title);
-  const splits = parts.map(splitCandidate).filter(isCandidate);
+  const splits = parts.map((part) => cornerQuoteCandidate(part) ?? splitCandidate(part)).filter(isCandidate);
   const candidates = [
     metadataCandidate(input),
     ...splits.flatMap(withoutForeignTail),
@@ -73,6 +74,16 @@ function splitCandidate(part: string): LyricsCandidate | null {
   return { track: rest.join(" - "), artist, kind: "split" };
 }
 
+function cornerQuoteCandidate(part: string): LyricsCandidate | null {
+  const match = CORNER_QUOTED.exec(part);
+  const artist = match ? cleanSegment(match[1]) : "";
+  return match && artist ? { track: cleanSegment(match[2]), artist, kind: "split" } : null;
+}
+
+function cornerQuotedTitle(part: string): string {
+  return CORNER_QUOTED.exec(part)?.[2] ?? part;
+}
+
 function withoutForeignTail(candidate: LyricsCandidate): LyricsCandidate[] {
   const parts = splitForeignTail(candidate.track);
   if (!parts) return [];
@@ -94,7 +105,7 @@ export function splitForeignTail(text: string): { main: string; tail: string } |
 }
 
 function titleCandidate(part: string, channel: string): LyricsCandidate {
-  return { track: cleanSegment(part), artist: cleanChannel(channel), kind: "title" };
+  return { track: cleanSegment(cornerQuotedTitle(part)), artist: cleanChannel(channel), kind: "title" };
 }
 
 function swapCandidate(candidate: LyricsCandidate): LyricsCandidate {
