@@ -4,4 +4,4 @@ onnxruntime-gpu>=1.22.0,<1.27
 audio-separator>=0.44.0,<0.49
 librosa>=0.10,<1
 yt-dlp[default]
-pykakasi>=2.3,<3
+-r requirements.romaji.txt

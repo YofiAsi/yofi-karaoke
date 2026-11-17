@@ -206,7 +206,7 @@ describe("refetchLyrics task", () => {
     it("keeps the stored Japanese lyrics when romanization fails", async () => {
       mockQuery.mockResolvedValueOnce({ rows: [japaneseRow] });
       mockFetchLyrics.mockResolvedValueOnce(notFound);
-      mockRomanize.mockRejectedValueOnce(new Error("pykakasi unavailable: ModuleNotFoundError"));
+      mockRomanize.mockRejectedValueOnce(new Error("romanizer unavailable: cutlet ModuleNotFoundError; pykakasi ModuleNotFoundError"));
       await expect(refetchLyrics({ songId: "s1" }, helpers)).resolves.toBeUndefined();
       expect(mockQuery).toHaveBeenCalledTimes(1);
       expect(mockNotify).not.toHaveBeenCalled();

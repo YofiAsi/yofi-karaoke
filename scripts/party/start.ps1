@@ -167,6 +167,20 @@ function Install-NodeModules {
     try { Invoke-Pnpm @("install", "--frozen-lockfile") } finally { Pop-Location }
 }
 
+function Test-RomajiPackages {
+    & $Paths.VenvPython -c "import importlib.util as u, sys; sys.exit(0 if all(u.find_spec(n) for n in ('pykakasi', 'cutlet', 'fugashi', 'unidic_lite')) else 1)"
+    return $LASTEXITCODE -eq 0
+}
+
+function Install-RomajiPackages {
+    if (Test-RomajiPackages) { return }
+    $uv = Find-Uv $Paths
+    if (-not $uv) { Write-Host "uv was not found, so the romaji packages were not checked." -ForegroundColor Yellow; return }
+    Set-UvEnvironment $Paths
+    & $uv pip install --quiet --python $Paths.VenvPython -r (Join-Path $RepoRoot "apps\worker\python\requirements.romaji.txt")
+    if ($LASTEXITCODE -ne 0) { Write-Host "The romaji packages could not be installed; Japanese lyrics stay in Japanese script." -ForegroundColor Yellow }
+}
+
 function Invoke-Migrations {
     Write-Step "Applying database migrations"
     Push-Location (Join-Path $RepoRoot "apps\api")
@@ -339,6 +353,7 @@ New-Item -ItemType Directory -Force -Path $script:RunLogs | Out-Null
 $sessionSecret = Get-StoredValue "session-secret.txt" { New-Secret }
 $hostPin = Get-StoredValue "host-pin.txt" { Read-HostPin }
 Install-NodeModules
+Install-RomajiPackages
 Invoke-BuildIfStale
 Initialize-Postgres
 
