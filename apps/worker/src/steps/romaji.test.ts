@@ -108,11 +108,11 @@ describe("romanizeLyrics", () => {
   });
 
   it("keeps the Japanese lyrics and logs once when the conversion fails", async () => {
-    m.run.mockRejectedValueOnce(new Error("pykakasi unavailable: ModuleNotFoundError"));
+    m.run.mockRejectedValueOnce(new Error("romanizer unavailable: cutlet ModuleNotFoundError; pykakasi ModuleNotFoundError"));
     const input = lyrics("[00:01.00]夢をみた", "夢をみた");
     expect(await romanizeLyrics(input, log)).toBe(input);
     expect(log).toHaveBeenCalledOnce();
-    expect(log.mock.calls[0][0]).toMatch(/romaji conversion failed.*pykakasi unavailable/);
+    expect(log.mock.calls[0][0]).toMatch(/romaji conversion failed.*romanizer unavailable/);
   });
 
   it("logs how many lines Python kept in Japanese script", async () => {
@@ -120,15 +120,23 @@ describe("romanizeLyrics", () => {
     await romanizeLyrics(lyrics(null, "夢をみた"), log);
     expect(log.mock.calls[0][0]).toMatch(/1 kept in Japanese script/);
   });
+
+  it("logs when pykakasi stood in for cutlet", async () => {
+    m.run.mockResolvedValueOnce({ lines: ["yume o mita"], failed: 0, fallback: "cutlet ModuleNotFoundError: No module named 'fugashi'" });
+    await romanizeLyrics(lyrics(null, "夢をみた"), log);
+    expect(log.mock.calls[0][0]).toMatch(/with pykakasi because cutlet ModuleNotFoundError/);
+  });
 });
 
 describe("parseRomanizerOutput", () => {
   it("reads the last JSON line", () => {
-    expect(parseRomanizerOutput('noise\n{"lines":["yume"],"failed":0,"unavailable":null}\n', 1)).toEqual({ lines: ["yume"], failed: 0 });
+    expect(parseRomanizerOutput('noise\n{"lines":["yume"],"failed":0,"unavailable":null}\n', 1)).toEqual({ lines: ["yume"], failed: 0, fallback: null });
+    const fallback = parseRomanizerOutput('{"lines":["yume"],"failed":0,"unavailable":null,"fallback":"cutlet ImportError"}', 1);
+    expect(fallback.fallback).toBe("cutlet ImportError");
   });
 
   it("rejects a missing library, a wrong line count and non JSON output", () => {
-    expect(() => parseRomanizerOutput('{"lines":["ゆめ"],"failed":0,"unavailable":"ModuleNotFoundError"}', 1)).toThrow(/pykakasi unavailable/);
+    expect(() => parseRomanizerOutput('{"lines":["ゆめ"],"failed":0,"unavailable":"ModuleNotFoundError"}', 1)).toThrow(/romanizer unavailable/);
     expect(() => parseRomanizerOutput('{"lines":["a"],"failed":0,"unavailable":null}', 2)).toThrow(/wrong line list/);
     expect(() => parseRomanizerOutput("Traceback", 1)).toThrow(/no JSON/);
   });

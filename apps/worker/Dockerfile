@@ -47,7 +47,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
 
 COPY --from=deno /deno /usr/local/bin/deno
 
-COPY apps/worker/python/requirements.txt /tmp/requirements.txt
+COPY apps/worker/python/requirements.txt apps/worker/python/requirements.romaji.txt /tmp/
 RUN python3.11 -m venv /opt/venv \
   && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
   && /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt

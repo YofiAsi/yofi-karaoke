@@ -63,9 +63,10 @@ function describeError(err: unknown): string {
 async function convertLyrics(lyrics: LyricsResult, log: LyricsLogger): Promise<LyricsResult> {
   const synced = linesOf(lyrics.syncedLyrics).map(splitLrcLine);
   const started = Date.now();
-  const { lines, failed } = await runRomanizer(lyricLines(lyrics));
+  const { lines, failed, fallback } = await runRomanizer(lyricLines(lyrics));
   const kept = failed > 0 ? `, ${failed} kept in Japanese script after errors` : "";
-  log(`romanized ${lines.length} lyric lines in ${Date.now() - started}ms${kept}`);
+  const engine = fallback ? `, with pykakasi because ${fallback}` : "";
+  log(`romanized ${lines.length} lyric lines in ${Date.now() - started}ms${kept}${engine}`);
   return {
     ...lyrics,
     syncedLyrics: lyrics.syncedLyrics === null ? null : rebuildLrc(synced, lines.slice(0, synced.length)),

@@ -10,6 +10,7 @@ const PYTHON_UTF8_ENV = { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8:
 export interface RomanizerOutput {
   lines: string[];
   failed: number;
+  fallback?: string | null;
 }
 
 function lastJsonLine(stdout: string): unknown {
@@ -26,10 +27,14 @@ function isStringList(value: unknown, length: number): value is string[] {
 }
 
 export function parseRomanizerOutput(stdout: string, expectedLines: number): RomanizerOutput {
-  const parsed = (lastJsonLine(stdout) ?? {}) as { lines?: unknown; failed?: unknown; unavailable?: unknown };
-  if (typeof parsed.unavailable === "string") throw new Error(`pykakasi unavailable: ${parsed.unavailable}`);
+  const parsed = (lastJsonLine(stdout) ?? {}) as { lines?: unknown; failed?: unknown; unavailable?: unknown; fallback?: unknown };
+  if (typeof parsed.unavailable === "string") throw new Error(`romanizer unavailable: ${parsed.unavailable}`);
   if (!isStringList(parsed.lines, expectedLines)) throw new Error(`romanize.py returned a wrong line list for ${expectedLines} lines`);
-  return { lines: parsed.lines, failed: typeof parsed.failed === "number" ? parsed.failed : 0 };
+  return {
+    lines: parsed.lines,
+    failed: typeof parsed.failed === "number" ? parsed.failed : 0,
+    fallback: typeof parsed.fallback === "string" ? parsed.fallback : null,
+  };
 }
 
 export async function runRomanizer(lines: string[]): Promise<RomanizerOutput> {
